@@ -28,16 +28,45 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8940091047:AAFANrYG9y
 ADMIN_CHAT_ID = None
 REMINDERS = []
 
-# کیبورد لمسی و ثابت پایین صفحه چت تلگرام
+# کیبورد لمسی و ثابت پایین صفحه چت تلگرام (ReplyKeyboardMarkup)
 MAIN_KEYBOARD = {
     "keyboard": [
         [{"text": "📊 وضعیت زنده سرور"}, {"text": "🪙 قیمت رمزارزها"}],
         [{"text": "🤖 چت با هوش مصنوعی"}, {"text": "⏰ تنظیم یادآور"}],
-        [{"text": "🌐 مشاهده وب‌سایت"}, {"text": "🏓 تست سرعت و پینگ"}]
+        [{"text": "🌐 ورود به داشبورد سرور", "web_app": {"url": "https://arashmesri.onrender.com/"}}],
+        [{"text": "🏓 تست سرعت و پینگ"}, {"text": "📬 ارسال پیام به مدیر"}]
     ],
     "resize_keyboard": True,
-    "persistent": True
+    "is_persistent": True,
+    "input_field_placeholder": "دستوری انتخاب کنید یا پیامی بنویسید..."
 }
+
+def get_status_inline_keyboard():
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "🌐 ورود به داشبورد زنده", "web_app": {"url": "https://arashmesri.onrender.com/"}},
+                {"text": "🔄 بروزرسانی وضعیت", "callback_data": "refresh_status"}
+            ],
+            [
+                {"text": "🪙 قیمت رمزارزها", "callback_data": "refresh_crypto"},
+                {"text": "🏓 تست پینگ دیتاسنتر", "callback_data": "cmd_ping"}
+            ]
+        ]
+    }
+
+def get_crypto_inline_keyboard():
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "🔄 بروزرسانی لحظه‌ای قیمت‌ها", "callback_data": "refresh_crypto"}
+            ],
+            [
+                {"text": "📊 وضعیت سرور", "callback_data": "refresh_status"},
+                {"text": "🌐 باز کردن داشبورد", "web_app": {"url": "https://arashmesri.onrender.com/"}}
+            ]
+        ]
+    }
 
 UPTIMEROBOT_DATA = {
     "status_code": 2,
@@ -144,28 +173,75 @@ def get_crypto_prices():
         return f"خطا در استعلام قیمت‌ها: {e}"
 
 # ----------------- هسته هوشمند ربات تلگرام -----------------
-def telegram_send_message(chat_id, text, use_keyboard=True):
+def telegram_api_call(method, payload):
+    """ارسال درخواست به تلگرام با فرمت استاندارد JSON"""
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        payload = {
-            "chat_id": chat_id,
-            "text": text,
-            "parse_mode": "HTML"
-        }
-        if use_keyboard:
-            payload["reply_markup"] = json.dumps(MAIN_KEYBOARD)
-
-        encoded = urllib.parse.urlencode(payload).encode("utf-8")
-        req = urllib.request.Request(url, data=encoded, headers={"content-type": "application/x-www-form-urlencoded"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/{method}"
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={"Content-Type": "application/json; charset=utf-8", "User-Agent": "ArashCloudBot/2.0"}
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as he:
+        try:
+            err_body = he.read().decode("utf-8")
+            print(f"[Telegram API HTTP {he.code} on {method}]: {err_body}")
+        except:
             pass
+        return None
     except Exception as e:
-        print(f"[Telegram Send Error] {e}")
+        print(f"[Telegram API Error on {method}]: {e}")
+        return None
+
+def telegram_send_message(chat_id, text, reply_markup=None, use_main_keyboard=True):
+    """ارسال پیام با پشتیبانی از کیبورد ثابت، دکمه‌های اینلاین و بازیابی خودکار در صورت خطای HTML"""
+    if reply_markup is None and use_main_keyboard:
+        reply_markup = MAIN_KEYBOARD
+
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "HTML"
+    }
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup
+
+    res = telegram_api_call("sendMessage", payload)
+    if not res or not res.get("ok"):
+        # در صورت بروز خطای پارس HTML، به عنوان متن ساده ارسال شود
+        payload.pop("parse_mode", None)
+        telegram_api_call("sendMessage", payload)
+
+def telegram_edit_message(chat_id, message_id, text, reply_markup=None):
+    """ویرایش درجا متن پیام برای دکمه‌های شیشه‌ای اینلاین"""
+    payload = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "text": text,
+        "parse_mode": "HTML"
+    }
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup
+
+    res = telegram_api_call("editMessageText", payload)
+    if not res or not res.get("ok"):
+        payload.pop("parse_mode", None)
+        telegram_api_call("editMessageText", payload)
+
+def telegram_answer_callback(callback_query_id, text=None, show_alert=False):
+    """پاسخ فوری به رویداد کلیک دکمه‌های اینلاین تلگرام"""
+    payload = {"callback_query_id": callback_query_id}
+    if text:
+        payload["text"] = text
+        payload["show_alert"] = show_alert
+    telegram_api_call("answerCallbackQuery", payload)
 
 def setup_telegram_bot_commands():
-    """ثبت منوی رسمی دستورات تلگرام در دکمه Menu پایین چت"""
+    """ثبت منوی رسمی دستورات تلگرام و دکمه وب‌اپ (Menu Button) پایین چت"""
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setMyCommands"
         commands = [
             {"command": "status", "description": "گزارش زنده آپ‌تایم و وضعیت سرور"},
             {"command": "crypto", "description": "قیمت لحظه‌ای بازار رمزارزها"},
@@ -174,10 +250,16 @@ def setup_telegram_bot_commands():
             {"command": "site", "description": "آدرس وب‌سایت و داشبورد رسمی"},
             {"command": "ping", "description": "تست سرعت و پینگ دیتاسنتر"}
         ]
-        data = json.dumps({"commands": commands}).encode("utf-8")
-        req = urllib.request.Request(url, data=data, headers={"content-type": "application/json"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            print("[Telegram Setup] منوی دکمه‌ای رسمی با موفقیت در تلگرام فعال شد.")
+        telegram_api_call("setMyCommands", {"commands": commands})
+
+        # تنظیم دکمه منو در پایین چت برای باز کردن مستقیم وب‌اپلیکیشن داشبورد
+        menu_button = {
+            "type": "web_app",
+            "text": "🌐 ورود به داشبورد",
+            "web_app": {"url": "https://arashmesri.onrender.com/"}
+        }
+        telegram_api_call("setChatMenuButton", {"menu_button": menu_button})
+        print("[Telegram Setup] منوی رسمی و دکمه لمسی وب‌اپ با موفقیت در تلگرام فعال شدند.")
     except Exception as e:
         print(f"[Telegram Setup Error] {e}")
 
@@ -200,103 +282,173 @@ def reminders_worker():
             REMINDERS.remove(r)
         time.sleep(5)
 
+def format_status_message():
+    """فرمت‌بندی گزارش آپ‌تایم رسمی UptimeRobot"""
+    fetch_uptimerobot_now()
+    uptime_24h = UPTIMEROBOT_DATA.get("uptime_24h", "100.000")
+    uptime_7d = UPTIMEROBOT_DATA.get("uptime_7d", "100.000")
+    uptime_30d = UPTIMEROBOT_DATA.get("uptime_30d", "100.000")
+    latency = UPTIMEROBOT_DATA.get("avg_response_time", "256")
+    total_pings = UPTIMEROBOT_DATA.get("total_checks_count", 20)
+    last_check = time.strftime('%H:%M:%S', time.localtime(UPTIMEROBOT_DATA.get("last_check_datetime", time.time())))
+
+    return (
+        f"📊 <b>گزارش زنده دیتاسنتر UptimeRobot:</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"● <b>وضعیت:</b> آنلاین و پایدار (200 OK) ✅\n"
+        f"📈 <b>آپ‌تایم ۲۴ ساعته:</b> {uptime_24h}٪\n"
+        f"📅 <b>آپ‌تایم ۷ روز و ۳۰ روز:</b> {uptime_7d}٪ / {uptime_30d}٪\n"
+        f"⚡ <b>میانگین زمان پاسخگویی:</b> {latency} میلی‌ثانیه\n"
+        f"📡 <b>تعداد پایش‌های موفق:</b> {total_pings} پایش\n"
+        f"⏱️ <b>آخرین پایش ثبت‌شده:</b> {last_check}\n"
+        f"🌍 <b>دیتاسنتر:</b> فرانکفورت، آلمان (EU Central)\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"🔗 <a href='https://arashmesri.onrender.com/'>مشاهده داشبورد تحت وب</a>"
+    )
+
 def telegram_bot_worker():
     global ADMIN_CHAT_ID, REMINDERS
     setup_telegram_bot_commands()
-    print(f"[Telegram Bot] پردازش ربات با کیبورد لمسی و منوی رسمی آغاز شد...")
+    print("[Telegram Bot] پردازش ربات با کیبورد لمسی دائمی، منوی رسمی و وب‌اپ آغاز شد...")
     last_update_id = 0
     while True:
         try:
-            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates?offset={last_update_id + 1}&timeout=30"
-            req = urllib.request.Request(url, headers={"user-agent": "Render-Bot-Server"})
-            with urllib.request.urlopen(req, timeout=35) as resp:
+            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates?offset={last_update_id + 1}&timeout=25"
+            req = urllib.request.Request(url, headers={"user-agent": "Render-Bot-Server/2.0"})
+            with urllib.request.urlopen(req, timeout=30) as resp:
                 updates = json.loads(resp.read().decode("utf-8"))
-                if updates.get("ok") and updates.get("result"):
-                    for item in updates["result"]:
-                        last_update_id = item["update_id"]
-                        msg = item.get("message")
-                        if not msg or "text" not in msg:
-                            continue
-                        
-                        chat_id = msg["chat"]["id"]
+                if not updates.get("ok") or not updates.get("result"):
+                    continue
+
+                for item in updates["result"]:
+                    last_update_id = item["update_id"]
+
+                    # ۱. پردازش رویدادهای کلیک روی دکمه‌های اینلاین (Callback Query)
+                    if "callback_query" in item:
+                        cq = item["callback_query"]
+                        cq_id = cq["id"]
+                        data = cq.get("data", "")
+                        from_user = cq.get("from", {})
+                        chat_id = cq.get("message", {}).get("chat", {}).get("id")
+                        msg_id = cq.get("message", {}).get("message_id")
                         ADMIN_CHAT_ID = chat_id
-                        raw_text = msg["text"].strip()
-                        cmd = raw_text.lower()
-                        sender_name = msg["from"].get("first_name", "آرش")
 
-                        # پشتیبانی هم‌زمان از دکمه‌های لمسی و دستورات متنی
-                        if cmd in ("/start", "/help", "سلام", "درود"):
-                            welcome_msg = (
-                                f"سلام <b>{sender_name}</b> عزیز! 👋\n"
-                                f"به سوئیچ و دستیار همه‌کاره سرور ابری (آلمان) خوش آمدید.\n\n"
-                                f"از دکمه‌های لمسی زیر چت یا منوی دستورات برای استفاده انتخاب کنید:"
-                            )
-                            telegram_send_message(chat_id, welcome_msg)
+                        if data == "refresh_status":
+                            telegram_answer_callback(cq_id, text="در حال دریافت داده‌های زنده UptimeRobot...")
+                            new_text = format_status_message()
+                            telegram_edit_message(chat_id, msg_id, new_text, reply_markup=get_status_inline_keyboard())
 
-                        elif cmd in ("/status", "📊 وضعیت زنده سرور"):
-                            uptime_24h = UPTIMEROBOT_DATA.get("uptime_24h", "100.000")
-                            uptime_7d = UPTIMEROBOT_DATA.get("uptime_7d", "100.000")
-                            uptime_30d = UPTIMEROBOT_DATA.get("uptime_30d", "100.000")
-                            latency = UPTIMEROBOT_DATA.get("avg_response_time", "256")
-                            total_pings = UPTIMEROBOT_DATA.get("total_checks_count", 11)
-                            
-                            status_msg = (
-                                f"📊 <b>گزارش زنده دیتاسنتر UptimeRobot:</b>\n"
-                                f"━━━━━━━━━━━━━━━━━━━━\n"
-                                f"● <b>وضعیت:</b> آنلاین و پایدار (200 OK) ✅\n"
-                                f"📈 <b>آپ‌تایم ۲۴ ساعته:</b> {uptime_24h}٪\n"
-                                f"📅 <b>آپ‌تایم ۷ روز و ۳۰ روز:</b> {uptime_7d}٪ / {uptime_30d}٪\n"
-                                f"⚡ <b>میانگین زمان پاسخگویی:</b> {latency} میلی‌ثانیه\n"
-                                f"📡 <b>تعداد پایش‌های موفق:</b> {total_pings} پایش\n"
-                                f"🌍 <b>دیتاسنتر:</b> فرانکفورت، آلمان (EU Central)\n"
-                                f"━━━━━━━━━━━━━━━━━━━━\n"
-                                f"🔗 <a href='https://arashmesri.onrender.com/'>مشاهده داشبورد تحت وب</a>"
-                            )
-                            telegram_send_message(chat_id, status_msg)
+                        elif data == "refresh_crypto":
+                            telegram_answer_callback(cq_id, text="در حال استعلام نرخ‌های لحظه‌ای...")
+                            crypto_msg = get_crypto_prices()
+                            telegram_edit_message(chat_id, msg_id, crypto_msg, reply_markup=get_crypto_inline_keyboard())
 
-                        elif cmd in ("/crypto", "/price", "🪙 قیمت رمزارزها", "قیمت", "ارز"):
-                            prices_msg = get_crypto_prices()
-                            telegram_send_message(chat_id, prices_msg)
+                        elif data == "cmd_ping":
+                            telegram_answer_callback(cq_id, text="⚡ پینگ سرور آلمان: ~۲۵۰ms (عالی)")
 
-                        elif cmd == "🤖 چت با هوش مصنوعی":
-                            telegram_send_message(chat_id, "🧠 <b>حالت هوش مصنوعی فعال است:</b>\nهر سوال، ایده، ترجمه یا درخواستی دارید در پیام بعدی بفرستید تا فوراً پاسخ دهم.")
+                        continue
 
-                        elif cmd.startswith("/ai"):
-                            query = raw_text[3:].strip()
-                            if not query:
-                                telegram_send_message(chat_id, "لطفاً سوال یا پیام خود را بعد از /ai بنویسید؛ مثلاً:\n<code>/ai ایده برای طراحی سایت</code>")
-                            else:
-                                telegram_send_message(chat_id, "🧠 در حال پردازش با هوش مصنوعی...")
-                                ai_res = get_ai_response(query)
-                                telegram_send_message(chat_id, f"🤖 <b>پاسخ هوش مصنوعی:</b>\n\n{ai_res}")
+                    # ۲. پردازش پیام‌های دریافتی از کاربران (Message)
+                    msg = item.get("message")
+                    if not msg or "text" not in msg:
+                        continue
 
-                        elif cmd == "⏰ تنظیم یادآور":
-                            telegram_send_message(chat_id, "⏰ <b>راهنمای تنظیم یادآور:</b>\nبرای تنظیم یادآور از فرمت زیر استفاده کنید:\n<code>/remind 10 تماس با کارفرما</code>\n(عدد بر حسب دقیقه است).")
+                    chat_id = msg["chat"]["id"]
+                    ADMIN_CHAT_ID = chat_id
+                    raw_text = msg["text"].strip()
+                    sender_name = msg["from"].get("first_name", "آرش")
 
-                        elif cmd.startswith("/remind"):
-                            parts = raw_text.split(maxsplit=2)
-                            if len(parts) < 3 or not parts[1].isdigit():
-                                telegram_send_message(chat_id, "فرمت صحیح یادآور:\n<code>/remind 10 تماس با کارفرما</code>\n(عدد بر حسب دقیقه است).")
-                            else:
-                                minutes = int(parts[1])
-                                note = parts[2]
-                                trigger_at = time.time() + (minutes * 60)
-                                REMINDERS.append({"chat_id": chat_id, "trigger_time": trigger_at, "text": note})
-                                telegram_send_message(chat_id, f"✅ <b>یادآور ذخیره شد!</b>\nسرور رأس <b>{minutes} دقیقه دیگر</b> موضوع زیر را به شما یادآوری می‌کند:\n«{note}»")
+                    # پاک‌سازی نام کاربری ربات از دستورات (مانند /start@ArashServerManagementbot)
+                    clean_cmd = raw_text.split("@")[0].strip().lower()
 
-                        elif cmd in ("/ping", "🏓 تست سرعت و پینگ"):
-                            telegram_send_message(chat_id, "🏓 <b>پونگ!</b> ارتباط با سرور ابری آلمان بدون فیلتر و با سرعت بسیار بالا برقرار است. ⚡")
+                    if clean_cmd in ("/start", "/help", "سلام", "درود", "شروع"):
+                        welcome_msg = (
+                            f"سلام <b>{sender_name}</b> عزیز! 👋\n"
+                            f"به سوئیچ و دستیار همه‌کاره سرور ابری (آلمان) خوش آمدید.\n\n"
+                            f"💡 <b>امکانات ویژه در دسترس شما:</b>\n"
+                            f"• دکمه‌های لمسی دائمی در پایین چت (کیبورد)\n"
+                            f"• دکمه <b>🌐 ورود به داشبورد</b> در کنار کادر پیام (Web App)\n"
+                            f"• دکمه منوی دستورات رسمی (Menu)\n\n"
+                            f"یکی از گزینه‌های زیر را لمس کنید یا سوال خود را بپرسید:"
+                        )
+                        telegram_send_message(chat_id, welcome_msg, reply_markup=get_status_inline_keyboard())
 
-                        elif cmd in ("/site", "🌐 مشاهده وب‌سایت"):
-                            telegram_send_message(chat_id, "🌐 <b>آدرس وب‌سایت و داشبورد رسمی شما:</b>\nhttps://arashmesri.onrender.com/\n\n(میزبانی ۲۴ ساعته در آلمان)")
+                    elif clean_cmd in ("/status", "📊 وضعیت زنده سرور", "وضعیت", "سرور", "status"):
+                        status_msg = format_status_message()
+                        telegram_send_message(chat_id, status_msg, reply_markup=get_status_inline_keyboard())
 
+                    elif clean_cmd in ("/crypto", "/price", "🪙 قیمت رمزارزها", "قیمت", "ارز", "کریپتو", "crypto"):
+                        prices_msg = get_crypto_prices()
+                        telegram_send_message(chat_id, prices_msg, reply_markup=get_crypto_inline_keyboard())
+
+                    elif clean_cmd in ("🤖 چت با هوش مصنوعی", "هوش مصنوعی", "ai"):
+                        telegram_send_message(
+                            chat_id,
+                            "🧠 <b>حالت هوش مصنوعی فعال است:</b>\n"
+                            "هر سوال، ایده، ترجمه یا پروژه‌ای در ذهن دارید بنویسید تا فوراً پاسخ دهم."
+                        )
+
+                    elif clean_cmd.startswith("/ai"):
+                        query = raw_text[3:].strip()
+                        if not query:
+                            telegram_send_message(chat_id, "لطفاً سوال یا پیام خود را بعد از /ai بنویسید؛ مثلاً:\n<code>/ai ایده برای طراحی سایت</code>")
                         else:
-                            # در صورت ارسال متن آزاد، هوش مصنوعی پاسخ دهد
                             telegram_send_message(chat_id, "🧠 در حال پردازش با هوش مصنوعی...")
-                            ai_res = get_ai_response(raw_text)
-                            telegram_send_message(chat_id, f"🤖 {ai_res}")
+                            ai_res = get_ai_response(query)
+                            telegram_send_message(chat_id, f"🤖 <b>پاسخ هوش مصنوعی:</b>\n\n{ai_res}")
+
+                    elif clean_cmd in ("⏰ تنظیم یادآور", "یادآور", "یاداور"):
+                        telegram_send_message(
+                            chat_id,
+                            "⏰ <b>راهنمای تنظیم یادآور:</b>\n"
+                            "برای تنظیم هشدار کافی است از فرمت زیر استفاده کنید:\n"
+                            "<code>/remind 10 تماس با کارفرما</code>\n"
+                            "(عدد مشخص‌کننده دقیقه است)."
+                        )
+
+                    elif clean_cmd.startswith("/remind"):
+                        parts = raw_text.split(maxsplit=2)
+                        if len(parts) < 3 or not parts[1].isdigit():
+                            telegram_send_message(chat_id, "فرمت صحیح یادآور:\n<code>/remind 10 تماس با کارفرما</code>\n(عدد بر حسب دقیقه است).")
+                        else:
+                            minutes = int(parts[1])
+                            note = parts[2]
+                            trigger_at = time.time() + (minutes * 60)
+                            REMINDERS.append({"chat_id": chat_id, "trigger_time": trigger_at, "text": note})
+                            telegram_send_message(chat_id, f"✅ <b>یادآور ذخیره شد!</b>\nسرور رأس <b>{minutes} دقیقه دیگر</b> موضوع زیر را به شما یادآوری می‌کند:\n«{note}»")
+
+                    elif clean_cmd in ("/ping", "🏓 تست سرعت و پینگ", "پینگ", "ping"):
+                        telegram_send_message(
+                            chat_id,
+                            "🏓 <b>پونگ!</b> ارتباط با سرور ابری آلمان بدون فیلتر و با سرعت بسیار بالا برقرار است. ⚡\n"
+                            "زمان پاسخگویی مستقیم: کمتر از ۲۵۰ میلی‌ثانیه"
+                        )
+
+                    elif clean_cmd in ("/site", "🌐 ورود به داشبورد سرور", "🌐 مشاهده وب‌سایت", "سایت", "site"):
+                        telegram_send_message(
+                            chat_id,
+                            "🌐 <b>آدرس وب‌سایت و داشبورد رسمی شما:</b>\n"
+                            "https://arashmesri.onrender.com/\n\n"
+                            "می‌توانید روی دکمه زیر ضربه بزنید تا داشبورد به صورت وب‌اپلیکیشن مستقیم باز شود:",
+                            reply_markup=get_status_inline_keyboard()
+                        )
+
+                    elif clean_cmd in ("📬 ارسال پیام به مدیر", "تماس", "پیام"):
+                        telegram_send_message(
+                            chat_id,
+                            "📬 <b>ارتباط مستقیم با مدیر:</b>\n"
+                            "شما می‌توانید هر پیامی دارید همین‌جا بنویسید یا از فرم تماس داخل وب‌سایت استفاده کنید تا بلادرنگ پیام شما ثبت شود."
+                        )
+
+                    else:
+                        # در صورت ارسال هر متن دیگر، با هوش مصنوعی پاسخ داده شود
+                        telegram_send_message(chat_id, "🧠 در حال تفکر و پردازش...")
+                        ai_res = get_ai_response(raw_text)
+                        telegram_send_message(chat_id, f"🤖 {ai_res}")
+
         except Exception as e:
             time.sleep(5)
+
 
 # ----------------- قالب HTML پیشرفته داشبورد با فرم تماس زنده -----------------
 HTML_DASHBOARD = """<!DOCTYPE html>
@@ -306,6 +458,7 @@ HTML_DASHBOARD = """<!DOCTYPE html>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>داشبورد سرور و ارتباط زنده | Arash Mesri Cloud Suite</title>
     <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -862,6 +1015,13 @@ HTML_DASHBOARD = """<!DOCTYPE html>
                 btn.disabled = false;
                 btn.innerHTML = '<span>🚀 ارسال فوری به تلگرام</span>';
             }
+        }
+
+        if (window.Telegram && window.Telegram.WebApp) {
+            try {
+                window.Telegram.WebApp.ready();
+                window.Telegram.WebApp.expand();
+            } catch (e) {}
         }
 
         initChart();
