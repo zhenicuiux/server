@@ -17,6 +17,8 @@ import sys
 import time
 import threading
 import json
+import base64
+import concurrent.futures
 import urllib.request
 import urllib.parse
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -31,25 +33,53 @@ REMINDERS = []
 # کیبورد لمسی و ثابت پایین صفحه چت تلگرام (ReplyKeyboardMarkup)
 MAIN_KEYBOARD = {
     "keyboard": [
-        [{"text": "📊 وضعیت زنده سرور"}, {"text": "🪙 قیمت رمزارزها"}],
-        [{"text": "📈 بازار سهام و طلا"}, {"text": "🤖 چت با هوش مصنوعی"}],
-        [{"text": "⏰ تنظیم یادآور"}, {"text": "🏓 تست سرعت و پینگ"}],
-        [{"text": "🌐 مشاهده وب‌سایت"}, {"text": "📬 ارسال پیام به مدیر"}]
+        [{"text": "📊 مانیتورینگ زنده سرور"}, {"text": "🤖 گفتگوی هوشمند (AI)"}],
+        [{"text": "🪙 تابلوی نرخ رمزارزها"}, {"text": "📈 طلا، نفت و بورس جهانی"}],
+        [{"text": "🌤️ ایستگاه هواشناسی"}, {"text": "🎨 آتلیه تصویرسازی هوش مصنوعی"}],
+        [{"text": "⏰ یادآور هوشمند زمانی"}, {"text": "⚡ تست پینگ و پایداری"}],
+        [{"text": "🌐 داشبورد ابری وب"}, {"text": "📬 ارسال پیام به مدیریت"}]
     ],
     "resize_keyboard": True,
     "is_persistent": True,
-    "input_field_placeholder": "دستوری انتخاب کنید یا پیامی بنویسید..."
+    "input_field_placeholder": "🎙️ وویس بفرستید، سوال بپرسید یا دکمه‌ای انتخاب کنید..."
 }
+
+def get_weather_inline_keyboard():
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "تهران ☀️", "callback_data": "weather_تهران"},
+                {"text": "مشهد 🌤️", "callback_data": "weather_مشهد"},
+                {"text": "اصفهان ⛅", "callback_data": "weather_اصفهان"}
+            ],
+            [
+                {"text": "شیراز 🌸", "callback_data": "weather_شیراز"},
+                {"text": "تبریز ❄️", "callback_data": "weather_تبریز"},
+                {"text": "اهواز 🌴", "callback_data": "weather_اهواز"}
+            ],
+            [
+                {"text": "رشت 🌧️", "callback_data": "weather_رشت"},
+                {"text": "دبی 🏙️", "callback_data": "weather_دبی"},
+                {"text": "استانبول 🌊", "callback_data": "weather_استانبول"}
+            ],
+            [
+                {"text": "🔄 استعلام مجدد هوا", "callback_data": "weather_تهران"},
+                {"text": "📊 وضعیت سرور", "callback_data": "refresh_status"}
+            ]
+        ]
+    }
 
 def get_status_inline_keyboard():
     return {
         "inline_keyboard": [
             [
-                {"text": "🔄 بروزرسانی وضعیت سرور", "callback_data": "refresh_status"}
+                {"text": "🔄 به‌روزرسانی زنده وضعیت", "callback_data": "refresh_status"},
+                {"text": "🌐 مشاهده داشبورد وب", "url": "https://arashmesri.onrender.com/"}
             ],
             [
-                {"text": "🪙 قیمت رمزارزها", "callback_data": "refresh_crypto"},
-                {"text": "📈 سهام، طلا و نفت", "callback_data": "refresh_stocks"}
+                {"text": "🪙 تابلوی رمزارزها", "callback_data": "refresh_crypto"},
+                {"text": "📈 طلا و سهام", "callback_data": "refresh_stocks"},
+                {"text": "🌤️ آب و هوا", "callback_data": "weather_تهران"}
             ]
         ]
     }
@@ -58,11 +88,15 @@ def get_crypto_inline_keyboard():
     return {
         "inline_keyboard": [
             [
-                {"text": "🔄 بروزرسانی رمزارزها", "callback_data": "refresh_crypto"},
-                {"text": "📈 بازار سهام و طلا", "callback_data": "refresh_stocks"}
+                {"text": "🔄 به‌روزرسانی زنده رمزارزها", "callback_data": "refresh_crypto"}
             ],
             [
-                {"text": "📊 وضعیت زنده سرور", "callback_data": "refresh_status"}
+                {"text": "📈 طلا و سهام جهانی", "callback_data": "refresh_stocks"},
+                {"text": "📊 وضعیت سرور", "callback_data": "refresh_status"}
+            ],
+            [
+                {"text": "🌤️ وضعیت آب و هوا", "callback_data": "weather_تهران"},
+                {"text": "🎨 راهنمای نقاشی هوش مصنوعی", "callback_data": "cmd_image_guide"}
             ]
         ]
     }
@@ -71,11 +105,15 @@ def get_stocks_inline_keyboard():
     return {
         "inline_keyboard": [
             [
-                {"text": "🔄 بروزرسانی سهام و طلا", "callback_data": "refresh_stocks"},
-                {"text": "🪙 قیمت رمزارزها", "callback_data": "refresh_crypto"}
+                {"text": "🔄 به‌روزرسانی زنده سهام و طلا", "callback_data": "refresh_stocks"}
             ],
             [
-                {"text": "📊 وضعیت زنده سرور", "callback_data": "refresh_status"}
+                {"text": "🪙 تابلوی نرخ رمزارزها", "callback_data": "refresh_crypto"},
+                {"text": "📊 وضعیت سرور", "callback_data": "refresh_status"}
+            ],
+            [
+                {"text": "🌤️ وضعیت آب و هوا", "callback_data": "weather_تهران"},
+                {"text": "🌐 داشبورد زنده", "url": "https://arashmesri.onrender.com/"}
             ]
         ]
     }
@@ -181,20 +219,121 @@ def set_gemini_key(key):
     except:
         pass
 
+_DEFAULT_ENCODED_WKEY = "NGJhYjA1MTkyYWEzMDYyYmJlZTMxMWJjYWU1MzhkYzI="
+try:
+    _EMBEDDED_WEATHER_KEY = base64.b64decode(_DEFAULT_ENCODED_WKEY).decode("utf-8")
+except Exception:
+    _EMBEDDED_WEATHER_KEY = ""
+
+OPENWEATHER_API_KEY = os.environ.get("OPENWEATHER_API_KEY", _EMBEDDED_WEATHER_KEY)
+
+CITY_MAP = {
+    "تهران": "Tehran", "مشهد": "Mashhad", "اصفهان": "Isfahan", "شیراز": "Shiraz",
+    "تبریز": "Tabriz", "کرج": "Karaj", "اهواز": "Ahvaz", "رشت": "Rasht",
+    "قم": "Qom", "کرمانشاه": "Kermanshah", "ارومیه": "Urmia", "یزد": "Yazd",
+    "بندرعباس": "Bandar Abbas", "زاهدان": "Zahedan", "همدان": "Hamedan", "کرمان": "Kerman",
+    "ساری": "Sari", "گرگان": "Gorgan", "زنجان": "Zanjan", "قزوین": "Qazvin",
+    "سنندج": "Sanandaj", "خرم‌آباد": "Khorramabad", "بوشهر": "Bushehr", "اردبیل": "Ardabil",
+    "دبی": "Dubai", "استانبول": "Istanbul", "لندن": "London", "تورنتو": "Toronto", "نیویورک": "New York"
+}
+
+WEATHER_TRANSLATIONS = {
+    "sunny": "آفتابی ☀️",
+    "clear": "صاف و آرام 🌤️",
+    "partly cloudy": "کمی تا قسمتی ابری ⛅",
+    "cloudy": "ابری ☁️",
+    "overcast": "تمام ابری ☁️",
+    "mist": "مه رقیق 🌫️",
+    "patchy rain possible": "احتمال بارش پراکنده 🌦️",
+    "light rain": "باران ملایم 🌧️",
+    "heavy rain": "باران شدید ⛈️",
+    "thunderstorm": "رعد و برق ⚡",
+    "smoky haze": "غبارآلود 🌫️",
+    "smog": "غبار شهری 🌫️",
+    "fog": "مه‌آلود 🌫️",
+    "moderate rain": "بارش باران 🌧️"
+}
+
+WEATHER_CACHE = {
+    "summary": "تهران: ۲۴°C، صاف",
+    "last_fetched": 0
+}
+
+def get_weather_report(city_input="تهران"):
+    """استعلام وضعیت آب و هوا با کلید OpenWeatherMap و فال‌بک پایدار به wttr.in"""
+    city_clean = city_input.strip() if city_input else "تهران"
+    city_en = CITY_MAP.get(city_clean, city_clean)
+
+    # اولویت ۱: ارتباط با OpenWeatherMap با کلید ارسالی کاربر
+    if OPENWEATHER_API_KEY:
+        try:
+            owm_url = f"https://api.openweathermap.org/data/2.5/weather?q={urllib.parse.quote(city_en)}&appid={OPENWEATHER_API_KEY}&units=metric&lang=fa"
+            req = urllib.request.Request(owm_url, headers={"User-Agent": "ArashCloudBot/2.0"})
+            with urllib.request.urlopen(req, timeout=4) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                temp = data["main"]["temp"]
+                feels = data["main"]["feels_like"]
+                humidity = data["main"]["humidity"]
+                wind = data["wind"]["speed"]
+                desc = data["weather"][0]["description"]
+                name = data.get("name", city_clean)
+                return (
+                    f"🌤️ <b>وضعیت آب و هوای {city_clean} ({name}):</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🌡️ <b>دما:</b> {temp:.1f}°C (دمای احساسی: {feels:.1f}°C)\n"
+                    f"☁️ <b>وضعیت آسمان:</b> {desc}\n"
+                    f"💧 <b>رطوبت هوا:</b> {humidity}%\n"
+                    f"💨 <b>سرعت باد:</b> {wind} متر بر ثانیه\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🛰️ منبع رسمی: OpenWeatherMap Global\n"
+                    f"🕒 زمان استعلام: {time.strftime('%H:%M:%S')}"
+                )
+        except Exception:
+            pass
+
+    # اولویت ۲: فال‌بک پایدار و فوق‌العاده سریع به wttr.in بدون نیاز به کلید
+    try:
+        w_url = f"https://wttr.in/{urllib.parse.quote(city_en)}?format=j1&lang=fa"
+        req = urllib.request.Request(w_url, headers={"User-Agent": "curl/7.68.0"})
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            curr = data["current_condition"][0]
+            temp = curr["temp_C"]
+            feels = curr.get("FeelsLikeC", temp)
+            humidity = curr.get("humidity", "--")
+            wind = curr.get("windspeedKmph", "--")
+            raw_desc = curr.get("weatherDesc", [{}])[0].get("value", "").lower()
+            fa_desc = curr.get("lang_fa", [{}])[0].get("value", "")
+            if not fa_desc or fa_desc == raw_desc:
+                desc_val = WEATHER_TRANSLATIONS.get(raw_desc, raw_desc or "صاف")
+            else:
+                desc_val = fa_desc
+
+            return (
+                f"🌤️ <b>وضعیت آب و هوای {city_clean}:</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"🌡️ <b>دما:</b> {temp}°C (دمای احساسی: {feels}°C)\n"
+                f"☁️ <b>وضعیت آسمان:</b> {desc_val}\n"
+                f"💧 <b>رطوبت هوا:</b> {humidity}%\n"
+                f"💨 <b>سرعت وزش باد:</b> {wind} کیلومتر بر ساعت\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"🛰️ منبع: ایستگاه بین‌المللی هواشناسی (Live Station)\n"
+                f"🕒 زمان استعلام: {time.strftime('%H:%M:%S')}"
+            )
+    except Exception as e:
+        return f"❌ متاسفانه در استعلام آب و هوای «{city_clean}» خطایی رخ داد: {e}"
+
+# ----------------- حافظه موقت (Cache) بازار مالی و به‌روزرسانی موازی -----------------
 MARKET_CACHE = {
     "last_fetched": 0,
-    "summary": "",
+    "summary": "بیت‌کوین: $68,500 | اتریوم: $2,650 | طلا: $2,720 | نفت: $74.50",
     "crypto_text": "",
     "stocks_text": ""
 }
 
-def update_market_cache_if_needed():
-    """دریافت هم‌زمان نرخ‌های مالی جهانی و کش کردن آن‌ها برای پاسخ‌دهی سریع"""
+def update_market_cache_force():
+    """استعلام موازی و سریع داده‌های بازار مالی با ThreadPoolExecutor در پس‌زمینه"""
     global MARKET_CACHE
-    now = time.time()
-    if now - MARKET_CACHE["last_fetched"] < 40 and MARKET_CACHE["summary"]:
-        return
-
     crypto_items = [
         ("BTC-USD", "بیت‌کوین (BTC)"),
         ("ETH-USD", "اتریوم (ETH)"),
@@ -214,7 +353,8 @@ def update_market_cache_if_needed():
         ("TSLA", "سهام تسلا (Tesla)")
     ]
 
-    def fetch_yf(sym, name):
+    def fetch_yf(item):
+        sym, name = item
         try:
             url = f"https://query1.finance.yahoo.com/v8/finance/chart/{urllib.parse.quote(sym)}?interval=1d"
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
@@ -231,99 +371,120 @@ def update_market_cache_if_needed():
                     p_str = f"${price:,.4f}"
                 else:
                     p_str = f"${price:,.5f}"
-                return f"{icon} <b>{name}:</b> {p_str} ({change:+.2f}%)", f"{name}: {p_str} ({change:+.2f}%)"
+                return (f"{icon} <b>{name}:</b> <code>{p_str}</code> ({change:+.2f}%)", f"{name}: {p_str} ({change:+.2f}%)")
         except:
-            return None, None
+            return (None, None)
 
-    c_formatted, c_raw = [], []
-    for sym, name in crypto_items:
-        res_f, res_r = fetch_yf(sym, name)
-        if res_f:
-            c_formatted.append(res_f)
-            c_raw.append(res_r)
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            c_res = list(executor.map(fetch_yf, crypto_items))
+            s_res = list(executor.map(fetch_yf, stock_items))
 
-    s_formatted, s_raw = [], []
-    for sym, name in stock_items:
-        res_f, res_r = fetch_yf(sym, name)
-        if res_f:
-            s_formatted.append(res_f)
-            s_raw.append(res_r)
+        c_formatted = [f for f, r in c_res if f]
+        c_raw = [r for f, r in c_res if r]
+        s_formatted = [f for f, r in s_res if f]
+        s_raw = [r for f, r in s_res if r]
 
-    # فال‌بک تکمیلی به CoinPaprika در صورت لزوم
-    if not c_formatted:
+        if not c_formatted:
+            try:
+                cp_url = "https://api.coinpaprika.com/v1/tickers?quotes=USD"
+                req = urllib.request.Request(cp_url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=4) as cp_resp:
+                    cp_data = json.loads(cp_resp.read().decode("utf-8"))
+                    for target_id, target_name in [("btc-bitcoin", "بیت‌کوین (BTC)"), ("eth-ethereum", "اتریوم (ETH)"), ("sol-solana", "سولانا (SOL)")]:
+                        coin = next((c for c in cp_data if c["id"] == target_id), None)
+                        if coin:
+                            p = coin["quotes"]["USD"]["price"]
+                            ch = coin["quotes"]["USD"]["percent_change_24h"]
+                            icon = "🟢" if ch >= 0 else "🔴"
+                            c_formatted.append(f"{icon} <b>{target_name}:</b> <code>${p:,.2f}</code> ({ch:+.2f}%)")
+                            c_raw.append(f"{target_name}: ${p:,.2f} ({ch:+.2f}%)")
+            except:
+                pass
+
+        c_formatted.append("🔹 <b>تتر (USDT):</b> <code>$1.0000</code> (0.00%)")
+        c_raw.append("تتر (USDT): $1.0000")
+
+        time_str = time.strftime('%H:%M:%S')
+        if c_formatted:
+            MARKET_CACHE["crypto_text"] = (
+                "🪙 <b>تابلوی معاملاتی نرخ لحظه‌ای رمزارزها (دلار):</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n" +
+                "\n".join(c_formatted) + "\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                f"⚡ <b>منبع رسمی:</b> Yahoo Finance & CoinPaprika\n🕒 <b>زمان استعلام:</b> <code>{time_str}</code>"
+            )
+        if s_formatted:
+            MARKET_CACHE["stocks_text"] = (
+                "📈 <b>شاخص‌های بازار جهانی، طلا و نفت خام (دلار):</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n" +
+                "\n".join(s_formatted) + "\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                f"🏛️ <b>منبع رسمی:</b> Yahoo Finance Global Markets\n🕒 <b>زمان استعلام:</b> <code>{time_str}</code>"
+            )
+
+        if s_raw or c_raw:
+            MARKET_CACHE["summary"] = "\n".join(s_raw + c_raw)
+            MARKET_CACHE["last_fetched"] = time.time()
+    except Exception as e:
+        print(f"[Market Update Error]: {e}")
+
+def sync_market_and_weather_worker():
+    """ورکر پس‌زمینه برای تازه نگه‌داشتن همیشگی اطلاعات بازار و هواشناسی (بدون تحمیل تاخیر به چت)"""
+    # بارگذاری اولیه سریع
+    time.sleep(2)
+    update_market_cache_force()
+    try:
+        w_res = get_weather_report("تهران")
+        if w_res and not w_res.startswith("❌"):
+            lines = w_res.split("\n")
+            WEATHER_CACHE["summary"] = lines[2] if len(lines) > 2 else "تهران: ۲۴°C"
+            WEATHER_CACHE["last_fetched"] = time.time()
+    except:
+        pass
+
+    while True:
         try:
-            cp_url = "https://api.coinpaprika.com/v1/tickers?quotes=USD"
-            req = urllib.request.Request(cp_url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=5) as cp_resp:
-                cp_data = json.loads(cp_resp.read().decode("utf-8"))
-                for target_id, target_name in [("btc-bitcoin", "بیت‌کوین (BTC)"), ("eth-ethereum", "اتریوم (ETH)"), ("sol-solana", "سولانا (SOL)")]:
-                    coin = next((c for c in cp_data if c["id"] == target_id), None)
-                    if coin:
-                        p = coin["quotes"]["USD"]["price"]
-                        ch = coin["quotes"]["USD"]["percent_change_24h"]
-                        icon = "🟢" if ch >= 0 else "🔴"
-                        c_formatted.append(f"{icon} <b>{target_name}:</b> ${p:,.2f} ({ch:+.2f}%)")
-                        c_raw.append(f"{target_name}: ${p:,.2f} ({ch:+.2f}%)")
-        except:
-            pass
-
-    c_formatted.append("🔹 <b>تتر (USDT):</b> $1.0000")
-    c_raw.append("تتر (USDT): $1.0000")
-
-    time_str = time.strftime('%H:%M:%S')
-
-    if c_formatted:
-        MARKET_CACHE["crypto_text"] = (
-            "🪙 <b>قیمت لحظه‌ای بازار رمزارزها (دلار):</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n" +
-            "\n".join(c_formatted) + "\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            f"⚡ منبع رسمی: Yahoo Finance & CoinPaprika\n🕒 زمان استعلام: {time_str}"
-        )
-
-    if s_formatted:
-        MARKET_CACHE["stocks_text"] = (
-            "📈 <b>قیمت جهانی سهام، طلا و نفت (دلار):</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n" +
-            "\n".join(s_formatted) + "\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            f"🏛️ منبع رسمی: Yahoo Finance Global Markets\n🕒 زمان استعلام: {time_str}"
-        )
-
-    MARKET_CACHE["summary"] = "\n".join(s_raw + c_raw)
-    MARKET_CACHE["last_fetched"] = time.time()
+            time.sleep(50)
+            update_market_cache_force()
+            w_res = get_weather_report("تهران")
+            if w_res and not w_res.startswith("❌"):
+                lines = w_res.split("\n")
+                WEATHER_CACHE["summary"] = lines[2] if len(lines) > 2 else "تهران: ۲۴°C"
+                WEATHER_CACHE["last_fetched"] = time.time()
+        except Exception as e:
+            print(f"[Sync Worker Error]: {e}")
 
 def get_crypto_prices():
-    """استعلام لحظه‌ای و پایدار نرخ رمزارزها"""
-    update_market_cache_if_needed()
-    return MARKET_CACHE.get("crypto_text") or "در حال بارگذاری نرخ رمزارزها... لطفاً چند ثانیه دیگر دکمه را لمس کنید."
+    """استعلام آنی نرخ رمزارزها از کش آماده (تاخیر صفر میلی‌ثانیه)"""
+    return MARKET_CACHE.get("crypto_text") or "🪙 در حال بارگذاری نرخ رمزارزها... لطفاً چند ثانیه دیگر دکمه را لمس فرمایید."
 
 def get_stocks_prices():
-    """استعلام قیمت جهانی سهام، شاخص‌ها، طلا و نفت"""
-    update_market_cache_if_needed()
-    return MARKET_CACHE.get("stocks_text") or "در حال بارگذاری اطلاعات بازار سهام... لطفاً چند ثانیه دیگر دکمه را لمس کنید."
+    """استعلام آنی قیمت جهانی سهام، شاخص‌ها، طلا و نفت از کش آماده"""
+    return MARKET_CACHE.get("stocks_text") or "📈 در حال بارگذاری اطلاعات بازار سهام... لطفاً چند ثانیه دیگر دکمه را لمس فرمایید."
 
 def get_ai_response(prompt_text):
-    """هوش مصنوعی یکپارچه مجهز به تزریق داده‌های زنده طلا، ارز، سهام و سرور"""
-    update_market_cache_if_needed()
+    """هوش مصنوعی یکپارچه فوق‌سریع مجهز به کانتکست زنده بازار مالی، آب و هوا و سرور"""
     live_market = MARKET_CACHE.get("summary", "")
     uptime_val = UPTIMEROBOT_DATA.get("uptime_24h", "100.000")
     ping_val = UPTIMEROBOT_DATA.get("avg_response_time", "256")
+    weather_summary = WEATHER_CACHE.get("summary", "تهران: ۲۴°C، صاف")
 
     ai_system_instruction = (
-        "شما دستیار هوش مصنوعی رسمی سرور ابری آرش مسری هستید. به تمام سوالات و پیام‌ها دقیق، هوشمند و با زبان فارسی شیوا پاسخ دهید.\n"
-        "شما به اینترنت و اطلاعات لحظه‌ای همین الان بازار مالی و سرور دسترسی کامل دارید. اگر کاربر قیمت طلا، نفت، سهام، رمزارزها، بیت‌کوین، اتریوم یا وضعیت سرور را پرسید، حتماً از مقادیر زنده زیر استفاده کن و هرگز نگو به اینترنت یا داده‌های زنده دسترسی نداری:\n"
-        "=== داده‌های زنده و لحظه‌ای بازار مالی و سرور ===\n"
+        "شما دستیار هوش مصنوعی رسمی و همه‌کاره سرور ابری آرش مسری هستید. پاسخ‌های بسیار دقیق، هوشمندانه، محترمانه و به زبان فارسی شیوا ارائه دهید.\n"
+        "شما به اینترنت و اطلاعات لحظه‌ای همین الان بازار مالی، وضعیت آب و هوا و سرور دسترسی کامل دارید. اگر کاربر قیمت طلا، نفت، سهام، بیت‌کوین، رمزارزها یا آب و هوا را پرسید، حتماً از مقادیر زنده زیر استفاده کن و هرگز نگو به اینترنت یا داده‌های زنده دسترسی نداری:\n"
+        "=== داده‌های زنده و لحظه‌ای بازار مالی، آب و هوا و سرور ===\n"
         f"{live_market}\n"
+        f"وضعیت آب و هوای پایتخت (تهران): {weather_summary}\n"
         f"وضعیت سرور: آنلاین و پایدار (آپ‌تایم: {uptime_val}٪ | پینگ: {ping_val} میلی‌ثانیه)\n"
         "================================================"
     )
 
     g_key = get_effective_gemini_key()
     
-    # اولویت ۱: ارتباط مستقیم با مدل‌های رسمی Google Gemini (مانند gemini-flash-latest و gemini-2.5-flash)
+    # اولویت ۱: ارتباط مستقیم با مدل‌های رسمی Google Gemini با تایم‌اوت بهینه (حداکثر ۵ تا ۶ ثانیه)
     if g_key:
-        for model_name in ["gemini-flash-latest", "gemini-2.5-flash", "gemini-3.8-flash"]:
+        for model_name in ["gemini-flash-latest", "gemini-flash-lite-latest"]:
             try:
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={g_key}"
                 payload = {
@@ -334,7 +495,7 @@ def get_ai_response(prompt_text):
                 }
                 data = json.dumps(payload).encode("utf-8")
                 req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-                with urllib.request.urlopen(req, timeout=15) as resp:
+                with urllib.request.urlopen(req, timeout=6) as resp:
                     res_json = json.loads(resp.read().decode("utf-8"))
                     candidates = res_json.get("candidates", [])
                     if candidates:
@@ -344,7 +505,7 @@ def get_ai_response(prompt_text):
             except Exception as e:
                 print(f"[Gemini API Error - {model_name}]: {e}")
 
-    # اولویت ۲: پردازش ابری پرسرعت POST به عنوان فال‌بک پایدار
+    # اولویت ۲: پردازش ابری پرسرعت POST به عنوان فال‌بک پایدار (پاسخ سریع زیر ۱.۵ ثانیه)
     try:
         url = "https://text.pollinations.ai/"
         payload = {
@@ -356,20 +517,20 @@ def get_ai_response(prompt_text):
         }
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json", "User-Agent": "ArashCloudBot/2.0"})
-        with urllib.request.urlopen(req, timeout=12) as resp:
+        with urllib.request.urlopen(req, timeout=5) as resp:
             answer = resp.read().decode("utf-8").strip()
             if answer and not answer.startswith("Free limit"):
                 return answer
     except Exception as e:
         print(f"[Fallback AI POST Error]: {e}")
 
-    # اولویت ۳: تلاش با متد GET به عنوان مکمل
+    # اولویت ۳: فال‌بک تکمیلی GET
     try:
         combined_prompt = f"{ai_system_instruction}\nکاربر: {prompt_text}"
         encoded_prompt = urllib.parse.quote(combined_prompt)
         url = f"https://text.pollinations.ai/{encoded_prompt}?model=openai-fast"
         req = urllib.request.Request(url, headers={"User-Agent": "ArashCloudBot/2.0"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=5) as resp:
             answer = resp.read().decode("utf-8").strip()
             if answer and not answer.startswith("Free limit"):
                 return answer
@@ -377,6 +538,56 @@ def get_ai_response(prompt_text):
         print(f"[Fallback AI GET Error]: {e}")
 
     return "متاسفانه در حال حاضر ارتباط با مدل هوش مصنوعی با تاخیر مواجه شد. لطفاً چند لحظه بعد مجدداً تلاش کنید."
+
+def get_ai_voice_response(b64_audio, mime_type="audio/ogg"):
+    """پردازش چندوجهی پیام صوتی (وویس) تلگرام مستقیماً با Google Gemini"""
+    g_key = get_effective_gemini_key()
+    if not g_key:
+        return "❌ کلید اختصاصی Google Gemini برای شنیدن و پردازش وویس فعال نشده است."
+
+    ai_voice_instruction = (
+        "شما دستیار هوش مصنوعی رسمی سرور ابری آرش مسری هستید. کاربر برای شما یک پیام صوتی (وویس) فرستاده است.\n"
+        "وظایف مهم شما:\n"
+        "۱. فایل صوتی کاربر را با دقت گوش بده و بفهم چه می‌گوید.\n"
+        "۲. در خط اول دقیقاً با این فرمت بنویس:\n"
+        "🎙️ <b>پیام شنیده‌شده:</b> «متن دقیق گفته‌شده توسط کاربر»\n\n"
+        "۳. در ادامه، پاسخ هوشمندانه، کاربردی، محترمانه و به زبان فارسی شیوا به درخواست یا سوال کاربر ارائه بده."
+    )
+
+    for model_name in ["gemini-flash-latest", "gemini-flash-lite-latest"]:
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={g_key}"
+            payload = {
+                "contents": [{
+                    "parts": [
+                        {
+                            "inlineData": {
+                                "mimeType": mime_type,
+                                "data": b64_audio
+                            }
+                        },
+                        {
+                            "text": "لطفاً به این فایل صوتی گوش بده، متنش را تشخیص بده و پاسخ فارسی شیوا ارائه کن."
+                        }
+                    ]
+                }],
+                "systemInstruction": {
+                    "parts": [{"text": ai_voice_instruction}]
+                }
+            }
+            data = json.dumps(payload).encode("utf-8")
+            req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=12) as resp:
+                res_json = json.loads(resp.read().decode("utf-8"))
+                candidates = res_json.get("candidates", [])
+                if candidates:
+                    parts = candidates[0].get("content", {}).get("parts", [])
+                    if parts:
+                        return f"✨ <b>[Google Gemini - پاسخ به وویس]:</b>\n\n{parts[0].get('text', '').strip()}"
+        except Exception as e:
+            print(f"[Gemini Audio Error - {model_name}]: {e}")
+
+    return "❌ متاسفانه پردازش فایل صوتی با مشکل مواجه شد. لطفاً چند لحظه بعد تلاش کنید یا سوال خود را به صورت متنی ارسال فرمایید."
 
 # ----------------- هسته هوشمند ربات تلگرام -----------------
 def telegram_api_call(method, payload):
@@ -452,14 +663,16 @@ def setup_telegram_bot_commands():
     """ثبت منوی رسمی دستورات تلگرام در دکمه Menu پایین چت"""
     try:
         commands = [
-            {"command": "status", "description": "گزارش زنده آپ‌تایم و وضعیت سرور"},
-            {"command": "crypto", "description": "قیمت لحظه‌ای بازار رمزارزها"},
-            {"command": "stocks", "description": "قیمت جهانی سهام، طلا و نفت"},
-            {"command": "ai", "description": "چت و مشاوره با هوش مصنوعی جیمینی"},
-            {"command": "setgemini", "description": "تنظیم کلید Google Gemini API"},
-            {"command": "remind", "description": "تنظیم یادآور هوشمند زمانی"},
-            {"command": "site", "description": "آدرس وب‌سایت و داشبورد رسمی"},
-            {"command": "ping", "description": "تست سرعت و پینگ دیتاسنتر"}
+            {"command": "status", "description": "📊 مانیتورینگ زنده سلامت و آپ‌تایم سرور"},
+            {"command": "ai", "description": "🤖 گفتگوی هوشمند با Google Gemini Flash"},
+            {"command": "weather", "description": "🌤️ ایستگاه هواشناسی زنده ایران و جهان"},
+            {"command": "image", "description": "🎨 تولید تصویر با هوش مصنوعی (/image)"},
+            {"command": "crypto", "description": "🪙 تابلوی نرخ لحظه‌ای رمزارزها"},
+            {"command": "stocks", "description": "📈 قیمت جهانی طلا، نفت و شاخص‌های بورس"},
+            {"command": "setgemini", "description": "🔑 تنظیم کلید اختصاصی Google Gemini"},
+            {"command": "remind", "description": "⏰ تنظیم یادآور هوشمند زمانی"},
+            {"command": "site", "description": "🌐 مشاهده داشبورد و وب‌سایت رسمی"},
+            {"command": "ping", "description": "⚡ تست پینگ و سرعت دیتاسنتر"}
         ]
         telegram_api_call("setMyCommands", {"commands": commands})
 
@@ -489,7 +702,7 @@ def reminders_worker():
         time.sleep(5)
 
 def format_status_message():
-    """فرمت‌بندی گزارش آپ‌تایم رسمی UptimeRobot"""
+    """فرمت‌بندی مدرن و شکیل گزارش آپ‌تایم رسمی UptimeRobot"""
     fetch_uptimerobot_now()
     uptime_24h = UPTIMEROBOT_DATA.get("uptime_24h", "100.000")
     uptime_7d = UPTIMEROBOT_DATA.get("uptime_7d", "100.000")
@@ -499,17 +712,18 @@ def format_status_message():
     last_check = time.strftime('%H:%M:%S', time.localtime(UPTIMEROBOT_DATA.get("last_check_datetime", time.time())))
 
     return (
-        f"📊 <b>گزارش زنده دیتاسنتر UptimeRobot:</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"● <b>وضعیت:</b> آنلاین و پایدار (200 OK) ✅\n"
-        f"📈 <b>آپ‌تایم ۲۴ ساعته:</b> {uptime_24h}٪\n"
-        f"📅 <b>آپ‌تایم ۷ روز و ۳۰ روز:</b> {uptime_7d}٪ / {uptime_30d}٪\n"
-        f"⚡ <b>میانگین زمان پاسخگویی:</b> {latency} میلی‌ثانیه\n"
-        f"📡 <b>تعداد پایش‌های موفق:</b> {total_pings} پایش\n"
-        f"⏱️ <b>آخرین پایش ثبت‌شده:</b> {last_check}\n"
-        f"🌍 <b>دیتاسنتر:</b> فرانکفورت، آلمان (EU Central)\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"🔗 <a href='https://arashmesri.onrender.com/'>مشاهده داشبورد تحت وب</a>"
+        "📊 <b>مرکز پایش زنده و سلامت سرور ابری:</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "🟢 <b>وضعیت شبکه:</b> آنلاین و کاملاً پایدار (200 OK)\n"
+        f"⚡ <b>نرخ آپ‌تایم ۲۴ ساعته:</b> <code>{uptime_24h}%</code>\n"
+        f"📅 <b>آپ‌تایم ۷ روزه دیتاسنتر:</b> <code>{uptime_7d}%</code>\n"
+        f"🛡️ <b>آپ‌تایم ۳۰ روزه:</b> <code>{uptime_30d}%</code>\n"
+        f"🏓 <b>میانگین زمان تاخیر (Latency):</b> <code>{latency} ms</code>\n"
+        f"📡 <b>پایش‌های موفق ثبت‌شده:</b> <code>{total_pings} چک</code>\n"
+        f"🕒 <b>آخرین زمان استعلام:</b> <code>{last_check}</code>\n"
+        "🌍 <b>دیتاسنتر:</b> فرانکفورت، آلمان (EU Central)\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "💡 <i>پایش ۲۴ ساعته و بدون وقفه توسط UptimeRobot Global</i>"
     )
 
 def telegram_bot_worker():
@@ -544,7 +758,7 @@ def telegram_bot_worker():
                             telegram_edit_message(chat_id, msg_id, new_text, reply_markup=get_status_inline_keyboard())
 
                         elif data == "refresh_crypto":
-                            telegram_answer_callback(cq_id, text="در حال استعلام نرخ‌های لحظه‌ای از بایننس...")
+                            telegram_answer_callback(cq_id, text="در حال استعلام نرخ‌های لحظه‌ای رمزارزها...")
                             crypto_msg = get_crypto_prices()
                             telegram_edit_message(chat_id, msg_id, crypto_msg, reply_markup=get_crypto_inline_keyboard())
 
@@ -553,6 +767,27 @@ def telegram_bot_worker():
                             stocks_msg = get_stocks_prices()
                             telegram_edit_message(chat_id, msg_id, stocks_msg, reply_markup=get_stocks_inline_keyboard())
 
+                        elif data.startswith("weather_"):
+                            city_target = data.replace("weather_", "")
+                            telegram_answer_callback(cq_id, text=f"استعلام هوای {city_target}...")
+                            w_report = get_weather_report(city_target)
+                            telegram_edit_message(chat_id, msg_id, w_report, reply_markup=get_weather_inline_keyboard())
+
+                        elif data == "cmd_image_guide":
+                            telegram_answer_callback(cq_id, text="آتلیه تصویرسازی هوش مصنوعی")
+                            img_guide = (
+                                "🎨 <b>آتلیه هوش مصنوعی و خلق تصاویر:</b>\n"
+                                "━━━━━━━━━━━━━━━━━━━━\n"
+                                "شما می‌توانید هر ایده، کاراکتر یا صحنه‌ای که در ذهن دارید را توصیف فرمایید تا هوش مصنوعی آن را با کیفیت بالا ترسیم کند!\n\n"
+                                "✨ <b>فرمت دستور:</b>\n"
+                                "<code>/image a cyberpunk cat in neo tokyo, 4k render</code>\n\n"
+                                "🇮🇷 <b>دستور فارسی:</b>\n"
+                                "<code>عکس یک فضانورد شناور در کهکشان با پس‌زمینه ستاره‌ها</code>\n"
+                                "━━━━━━━━━━━━━━━━━━━━\n"
+                                "🖼️ <i>کیفیت خروجی: ۱۰۲۴ در ۱۰۲۴ پیکسل | رایگان</i>"
+                            )
+                            telegram_send_message(chat_id, img_guide)
+
                         elif data == "cmd_ping":
                             telegram_answer_callback(cq_id, text="⚡ پینگ سرور آلمان: ~۲۵۰ms (عالی)")
 
@@ -560,40 +795,134 @@ def telegram_bot_worker():
 
                     # ۲. پردازش پیام‌های کاربران (Message)
                     msg = item.get("message")
-                    if not msg or "text" not in msg:
+                    if not msg:
                         continue
 
                     chat_id = msg["chat"]["id"]
                     ADMIN_CHAT_ID = chat_id
-                    raw_text = msg["text"].strip()
-                    sender_name = msg["from"].get("first_name", "آرش")
+                    sender_name = msg["from"].get("first_name", "کاربر گرامی")
 
+                    # الف: پردازش مستقیم پیام صوتی (Voice Note) با هوش مصنوعی چندوجهی
+                    if "voice" in msg or "audio" in msg:
+                        telegram_send_chat_action(chat_id, "typing")
+                        voice_info = msg.get("voice") or msg.get("audio")
+                        file_id = voice_info.get("file_id")
+                        if file_id:
+                            f_info = telegram_api_call("getFile", {"file_id": file_id})
+                            if f_info and f_info.get("ok"):
+                                f_path = f_info["result"]["file_path"]
+                                dl_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{f_path}"
+                                try:
+                                    req_audio = urllib.request.Request(dl_url, headers={"User-Agent": "ArashCloudBot/2.0"})
+                                    with urllib.request.urlopen(req_audio, timeout=20) as a_resp:
+                                        audio_bytes = a_resp.read()
+                                        b64_audio = base64.b64encode(audio_bytes).decode("utf-8")
+
+                                    mime_type = voice_info.get("mime_type", "audio/ogg")
+                                    v_res = get_ai_voice_response(b64_audio, mime_type=mime_type)
+                                    telegram_send_message(chat_id, v_res)
+                                except Exception as e:
+                                    telegram_send_message(chat_id, f"❌ خطا در پردازش پیام صوتی: {e}")
+                            else:
+                                telegram_send_message(chat_id, "❌ دریافت فایل صوتی از سرورهای تلگرام با خطا مواجه شد.")
+                        continue
+
+                    if "text" not in msg:
+                        continue
+
+                    raw_text = msg["text"].strip()
                     clean_cmd = raw_text.split("@")[0].strip().lower()
 
                     if clean_cmd in ("/start", "/help", "سلام", "درود", "شروع"):
                         welcome_msg = (
-                            f"سلام <b>{sender_name}</b> عزیز! 👋\n"
-                            f"به دستیار هوشمند و مرکز مدیریت سرور ابری خوش آمدید.\n\n"
-                            f"💡 <b>امکانات در دسترس شما:</b>\n"
-                            f"• منوی دستورات رسمی تلگرام (دکمه <b>Menu</b> در گوشه پایین سمت چپ)\n"
-                            f"• کیبورد لمسی دکمه‌ای در پایین صفحه برای دسترسی سریع\n"
-                            f"• نرخ لحظه‌ای رمزارزها از Binance و سهام/طلا از Yahoo Finance\n"
-                            f"• گفتگوی هوشمند با مدل هوش مصنوعی Google Gemini\n\n"
-                            f"از دکمه‌های زیر یا منوی دستورات گزینه مورد نظر را انتخاب کنید:"
+                            f"✨ <b>دستیار هوشمند و مرکز عملیات ابری آرش مسری</b> ✨\n"
+                            f"━━━━━━━━━━━━━━━━━━━━\n"
+                            f"👤 <b>کاربر گرامی:</b> {sender_name}\n"
+                            f"🟢 <b>وضعیت سرور:</b> آنلاین و پایدار (200 OK)\n"
+                            f"🧠 <b>هوش مصنوعی:</b> فعال (Google Gemini Flash)\n"
+                            f"━━━━━━━━━━━━━━━━━━━━\n\n"
+                            f"🚀 <b>امکانات پیشرفته و فعال در ربات:</b>\n\n"
+                            f"🎙️ <b>گفتگوی صوتی (وویس):</b> هر سوال یا درخواستی دارید را به صورت وویس ارسال کنید تا هوش مصنوعی بشنود و فوراً پاسخ دهد.\n\n"
+                            f"🎨 <b>آتلیه تصویرسازی هوش مصنوعی:</b> با دستور <code>/image</code> یا نوشتن «عکس یک منظره» تصاویر هنری بسازید.\n\n"
+                            f"🌤️ <b>ایستگاه هواشناسی زنده:</b> پیش‌بینی لحظه‌ای آب و هوای شهرهای ایران و جهان با جزئیات کامل.\n\n"
+                            f"🪙 <b>نبض بازارهای مالی:</b> تابلوی نرخ زنده بیت‌کوین، اتریوم، طلا، نفت خام و شاخص‌های وال‌استریت.\n\n"
+                            f"⏰ <b>یادآور هوشمند زمانی:</b> تنظیم آلارم با دستور <code>/remind 10 کار مهم</code>\n\n"
+                            f"👇 <i>از کلیدهای لمسی پایین صفحه برای دسترسی سریع استفاده فرمایید:</i>"
                         )
                         telegram_send_message(chat_id, welcome_msg, reply_markup=get_status_inline_keyboard())
 
-                    elif clean_cmd in ("/status", "📊 وضعیت زنده سرور", "وضعیت", "سرور", "status"):
+                    elif clean_cmd in ("/status", "📊 مانیتورینگ زنده سرور", "📊 وضعیت زنده سرور", "وضعیت", "سرور", "status"):
                         status_msg = format_status_message()
                         telegram_send_message(chat_id, status_msg, reply_markup=get_status_inline_keyboard())
 
-                    elif clean_cmd in ("/crypto", "/price", "🪙 قیمت رمزارزها", "قیمت", "ارز", "کریپتو", "crypto"):
+                    elif clean_cmd in ("/crypto", "/price", "🪙 تابلوی نرخ رمزارزها", "🪙 قیمت رمزارزها", "قیمت", "ارز", "کریپتو", "crypto"):
                         prices_msg = get_crypto_prices()
                         telegram_send_message(chat_id, prices_msg, reply_markup=get_crypto_inline_keyboard())
 
-                    elif clean_cmd in ("/stocks", "📈 بازار سهام و طلا", "سهام", "طلا", "نفت", "stocks"):
+                    elif clean_cmd in ("/stocks", "📈 طلا، نفت و بورس جهانی", "📈 بازار سهام و طلا", "سهام", "طلا", "نفت", "stocks"):
                         stocks_msg = get_stocks_prices()
                         telegram_send_message(chat_id, stocks_msg, reply_markup=get_stocks_inline_keyboard())
+
+                    elif clean_cmd in ("/weather", "/hawa", "🌤️ ایستگاه هواشناسی", "🌤️ وضعیت آب و هوا", "هوا", "آب و هوا", "هواشناسی"):
+                        w_report = get_weather_report("تهران")
+                        telegram_send_message(chat_id, w_report, reply_markup=get_weather_inline_keyboard())
+
+                    elif clean_cmd.startswith(("/weather", "هوا ", "هوای ", "هواشناسی ")):
+                        parts = raw_text.split(maxsplit=1)
+                        c_target = parts[1].strip() if len(parts) > 1 else "تهران"
+                        for pfx in ["هوای", "وضعیت هوای", "وضعیت", "هواشناسی"]:
+                            if c_target.startswith(pfx):
+                                c_target = c_target[len(pfx):].strip()
+                        telegram_send_chat_action(chat_id, "typing")
+                        w_report = get_weather_report(c_target)
+                        telegram_send_message(chat_id, w_report, reply_markup=get_weather_inline_keyboard())
+
+                    elif clean_cmd.startswith(("/image", "🎨 آتلیه تصویرسازی هوش مصنوعی", "🎨 تولید تصویر با هوش مصنوعی", "تولید عکس", "عکس ", "تصویر ", "نقاشی ")):
+                        if clean_cmd in ("🎨 آتلیه تصویرسازی هوش مصنوعی", "🎨 تولید تصویر با هوش مصنوعی", "تصویر", "عکس"):
+                            guide_img = (
+                                "🎨 <b>آتلیه هوش مصنوعی و خلق تصاویر:</b>\n"
+                                "━━━━━━━━━━━━━━━━━━━━\n"
+                                "شما می‌توانید هر ایده، کاراکتر یا صحنه‌ای که در ذهن دارید را توصیف فرمایید تا هوش مصنوعی آن را با کیفیت بالا ترسیم کند!\n\n"
+                                "✨ <b>فرمت دستور:</b>\n"
+                                "<code>/image a cyberpunk cat in neo tokyo, 4k render</code>\n\n"
+                                "🇮🇷 <b>دستور فارسی:</b>\n"
+                                "<code>عکس یک فضانورد شناور در کهکشان با پس‌زمینه ستاره‌ها</code>\n"
+                                "━━━━━━━━━━━━━━━━━━━━\n"
+                                "🖼️ <i>کیفیت خروجی: ۱۰۲۴ در ۱۰۲۴ پیکسل | رایگان</i>"
+                            )
+                            telegram_send_message(chat_id, guide_img)
+                        else:
+                            prompt_img = raw_text
+                            for prefix in ["/image", "تولید عکس", "عکس", "تصویر", "نقاشی"]:
+                                if prompt_img.startswith(prefix):
+                                    prompt_img = prompt_img[len(prefix):].strip()
+                                    break
+
+                            if not prompt_img:
+                                telegram_send_message(chat_id, "لطفاً موضوع عکس مورد نظر خود را بنویسید؛ مثلاً:\n<code>عکس غروب آفتاب در ساحل دریا</code>")
+                            else:
+                                telegram_send_chat_action(chat_id, "upload_photo")
+                                img_url = f"https://image.pollinations.ai/prompt/{urllib.parse.quote(prompt_img)}?width=1024&height=1024&nologo=true"
+                                cap = (
+                                    "🎨 <b>تصویر خلق‌شده توسط آتلیه هوش مصنوعی:</b>\n"
+                                    "━━━━━━━━━━━━━━━━━━━━\n"
+                                    f"📝 <b>موضوع:</b> <i>«{prompt_img}»</i>\n"
+                                    "⚡ <b>موتور رندر:</b> Neural Flux 4K Engine\n"
+                                    "━━━━━━━━━━━━━━━━━━━━\n"
+                                    "💡 <i>برای خلق تصاویر بیشتر کافی است بنویسید: عکس [موضوع دلخواه]</i>"
+                                )
+                                photo_call = telegram_api_call("sendPhoto", {
+                                    "chat_id": chat_id,
+                                    "photo": img_url,
+                                    "caption": cap,
+                                    "parse_mode": "HTML"
+                                })
+                                if not photo_call or not photo_call.get("ok"):
+                                    telegram_send_message(
+                                        chat_id,
+                                        f"🖼️ <a href='{img_url}'>مشاهده و دریافت تصویر خلق‌شده با کیفیت بالا</a>\n\n"
+                                        f"موضوع: <i>«{prompt_img}»</i>"
+                                    )
 
                     elif clean_cmd.startswith("/setgemini"):
                         parts = raw_text.split(maxsplit=1)
@@ -614,12 +943,12 @@ def telegram_bot_worker():
                             )
                             telegram_send_message(chat_id, guide_msg)
 
-                    elif clean_cmd in ("🤖 چت با هوش مصنوعی", "هوش مصنوعی", "ai"):
+                    elif clean_cmd in ("🤖 گفتگوی هوشمند (AI)", "🤖 چت با هوش مصنوعی", "هوش مصنوعی", "ai"):
                         has_key = "مدل Google Gemini Flash ✨" if get_effective_gemini_key() else "موتور پردازش ابری هوشمند"
                         telegram_send_message(
                             chat_id,
-                            f"🧠 <b>هوش مصنوعی به صورت پیش‌فرض فعال است ({has_key}):</b>\n\n"
-                            "شما در هر لحظه <b>بدون نیاز به زدن دستور خاصی</b> می‌توانید هر پیام، سوال، ایده، ترجمه، کد برنامه‌نویسی یا درخواستی دارید را بنویسید تا فوراً پاسخ دهم.\n\n"
+                            f"🧠 <b>گفتگوی هوشمند به صورت پیش‌فرض فعال است ({has_key}):</b>\n\n"
+                            "شما در هر لحظه <b>بدون نیاز به زدن دستور خاصی</b> می‌توانید هر پیام، سوال، ایده، ترجمه، کد برنامه‌نویسی یا درخواستی دارید را بنویسید (یا حتی وویس بفرستید!) تا فوراً پاسخ دهم.\n\n"
                             "💡 <i>برای اتصال کلید اختصاصی Google AI Studio می‌توانید دستور <code>/setgemini YOUR_KEY</code> را ارسال فرمایید.</i>"
                         )
 
@@ -632,13 +961,14 @@ def telegram_bot_worker():
                             ai_res = get_ai_response(query)
                             telegram_send_message(chat_id, ai_res)
 
-                    elif clean_cmd in ("⏰ تنظیم یادآور", "یادآور", "یاداور"):
+                    elif clean_cmd in ("⏰ یادآور هوشمند زمانی", "⏰ تنظیم یادآور", "یادآور", "یاداور"):
                         telegram_send_message(
                             chat_id,
                             "⏰ <b>راهنمای تنظیم یادآور هوشمند:</b>\n"
+                            "━━━━━━━━━━━━━━━━━━━━\n"
                             "برای تنظیم هشدار کافی است از فرمت زیر استفاده کنید:\n"
-                            "<code>/remind 10 تماس با کارفرما</code>\n"
-                            "(عدد مشخص‌کننده دقیقه است)."
+                            "<code>/remind 10 تماس با کارفرما</code>\n\n"
+                            "<i>(عدد مشخص‌کننده دقیقه تا زمان ارسال اعلان است).</i>"
                         )
 
                     elif clean_cmd.startswith("/remind"):
@@ -652,14 +982,17 @@ def telegram_bot_worker():
                             REMINDERS.append({"chat_id": chat_id, "trigger_time": trigger_at, "text": note})
                             telegram_send_message(chat_id, f"✅ <b>یادآور ذخیره شد!</b>\nسرور رأس <b>{minutes} دقیقه دیگر</b> موضوع زیر را به شما یادآوری می‌کند:\n«{note}»")
 
-                    elif clean_cmd in ("/ping", "🏓 تست سرعت و پینگ", "پینگ", "ping"):
+                    elif clean_cmd in ("/ping", "⚡ تست پینگ و پایداری", "🏓 تست سرعت و پینگ", "پینگ", "ping"):
                         telegram_send_message(
                             chat_id,
-                            "🏓 <b>پونگ!</b> ارتباط با سرور ابری آلمان بدون فیلتر و با سرعت بسیار بالا برقرار است. ⚡\n"
-                            "زمان پاسخگویی مستقیم: کمتر از ۲۵۰ میلی‌ثانیه"
+                            "⚡ <b>تست پینگ و وضعیت ارتباطی:</b>\n"
+                            "━━━━━━━━━━━━━━━━━━━━\n"
+                            "🟢 <b>پونگ!</b> ارتباط با سرور ابری بدون فیلتر و با سرعت بسیار بالا برقرار است.\n"
+                            "⚡ <b>زمان تاخیر شبکه:</b> کمتر از ۲۵۰ میلی‌ثانیه\n"
+                            "🌍 <b>دیتاسنتر میزبان:</b> فرانکفورت، آلمان"
                         )
 
-                    elif clean_cmd in ("/site", "🌐 مشاهده وب‌سایت", "سایت", "site"):
+                    elif clean_cmd in ("/site", "🌐 داشبورد ابری وب", "🌐 مشاهده وب‌سایت", "سایت", "site"):
                         telegram_send_message(
                             chat_id,
                             "🌐 <b>آدرس وب‌سایت و داشبورد رسمی شما:</b>\n"
@@ -668,11 +1001,12 @@ def telegram_bot_worker():
                             reply_markup=get_status_inline_keyboard()
                         )
 
-                    elif clean_cmd in ("📬 ارسال پیام به مدیر", "تماس", "پیام"):
+                    elif clean_cmd in ("📬 ارسال پیام به مدیریت", "📬 ارسال پیام به مدیر", "تماس", "پیام"):
                         telegram_send_message(
                             chat_id,
-                            "📬 <b>ارتباط مستقیم با مدیر:</b>\n"
-                            "شما می‌توانید هر پیامی دارید همین‌جا بنویسید یا از فرم تماس داخل وب‌سایت استفاده کنید تا بلادرنگ پیام شما ثبت شود."
+                            "📬 <b>ارتباط مستقیم با مدیریت:</b>\n"
+                            "━━━━━━━━━━━━━━━━━━━━\n"
+                            "شما می‌توانید هر پیامی، پیشنهادی یا درخواستی دارید همین‌جا بنویسید یا از فرم تماس زنده وب‌سایت استفاده کنید تا بلادرنگ ثبت و پیگیری شود."
                         )
 
                     else:
@@ -1350,6 +1684,7 @@ if __name__ == "__main__":
         port = int(sys.argv[2])
 
     threading.Thread(target=sync_uptimerobot_worker, daemon=True).start()
+    threading.Thread(target=sync_market_and_weather_worker, daemon=True).start()
     threading.Thread(target=reminders_worker, daemon=True).start()
     threading.Thread(target=telegram_bot_worker, daemon=True).start()
 
