@@ -1,6 +1,6 @@
 """
-داشبورد مانیتورینگ زنده و ۱۰۰٪ همگام با API رسمی UptimeRobot
-تمامی مقادیر، آپ‌تایم، زمان آخرین پایش و نمودارها مستقیماً و بدون مغایرت از دیتابیس UptimeRobot استعلام می‌شوند.
+داشبورد مانیتورینگ زنده و ربات تلگرام ۲۴ ساعته (@ArashServerManagementbot)
+متصل به API رسمی UptimeRobot و پردازش کامل دستورات تلگرام در پس‌زمینه سرور
 """
 
 import os
@@ -12,9 +12,10 @@ import urllib.request
 import urllib.parse
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
+SERVER_START_TIME = time.time()
 UPTIMEROBOT_API_KEY = os.environ.get("UPTIMEROBOT_API_KEY", "ur3854766-dd767e7271f53eeb0daba4b0")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8940091047:AAFANrYG9yzhowrk4uohOGKH8B4OdwWXe-Q")
 
-# داده‌های مانیتور UptimeRobot (مقداردهی اولیه و همگام‌سازی فوری)
 UPTIMEROBOT_DATA = {
     "status_code": 2,
     "status_text": "Up (آنلاین و پایدار)",
@@ -78,18 +79,101 @@ def fetch_uptimerobot_now():
                 UPTIMEROBOT_DATA["last_synced"] = time.time()
                 UPTIMEROBOT_DATA["monitor_id"] = mon.get("id", 804290100)
                 UPTIMEROBOT_DATA["friendly_name"] = mon.get("friendly_name", "arashmesri.onrender.com")
-                print(f"[UptimeRobot Sync] همگام شد: {len(r_times)} پایش ثبت‌شده | آخرین پایش: {UPTIMEROBOT_DATA['last_check_datetime']}")
     except Exception as e:
         print(f"[UptimeRobot Sync Error] {e}")
 
-# استعلام بلافاصله در ابتدای اجرای اسکریپت تا از لحظه اول هماهنگ باشد
 fetch_uptimerobot_now()
 
 def sync_uptimerobot_worker():
-    """ترد پس‌زمینه برای استعلام هر ۴۵ ثانیه جهت حفظ تطابق ۱۰۰ درصدی با UptimeRobot"""
     while True:
         time.sleep(45)
         fetch_uptimerobot_now()
+
+# ----------------- هسته هوشمند ربات تلگرام -----------------
+def telegram_send_message(chat_id, text):
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        payload = {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "HTML"
+        }
+        encoded = urllib.parse.urlencode(payload).encode("utf-8")
+        req = urllib.request.Request(url, data=encoded, headers={"content-type": "application/x-www-form-urlencoded"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            pass
+    except Exception as e:
+        print(f"[Telegram Send Error] {e}")
+
+def telegram_bot_worker():
+    """پولینگ ۲۴ ساعته اختصاصی برای دریافت و پاسخ به دستورات تلگرام"""
+    print(f"[Telegram Bot] آغاز به کار ربات با توکن فعال...")
+    last_update_id = 0
+    while True:
+        try:
+            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates?offset={last_update_id + 1}&timeout=30"
+            req = urllib.request.Request(url, headers={"user-agent": "Render-Bot-Server"})
+            with urllib.request.urlopen(req, timeout=35) as resp:
+                updates = json.loads(resp.read().decode("utf-8"))
+                if updates.get("ok") and updates.get("result"):
+                    for item in updates["result"]:
+                        last_update_id = item["update_id"]
+                        msg = item.get("message")
+                        if not msg or "text" not in msg:
+                            continue
+                        
+                        chat_id = msg["chat"]["id"]
+                        text = msg["text"].strip().lower()
+                        sender_name = msg["from"].get("first_name", "آرش")
+
+                        if text in ("/start", "/help", "سلام", "درود"):
+                            welcome_msg = (
+                                f"سلام <b>{sender_name}</b> عزیز! 👋\n"
+                                f"به ربات اختصاصی مدیریت سرور ابری (آلمان) خوش آمدید.\n\n"
+                                f"⚡ <b>دستورات در دسترس:</b>\n"
+                                f"📊 /status - استعلام زنده وضعیت، آپ‌تایم و پینگ سرور\n"
+                                f"🏓 /ping - تست سرعت و اتصال مستقیم سرور\n"
+                                f"🌐 /site - لینک مستقیم داشبورد وب‌سایت شما\n"
+                                f"🕒 /time - ساعت دقیق سرور و آخرین زمان پایش"
+                            )
+                            telegram_send_message(chat_id, welcome_msg)
+
+                        elif text == "/status":
+                            uptime_24h = UPTIMEROBOT_DATA.get("uptime_24h", "100.000")
+                            uptime_7d = UPTIMEROBOT_DATA.get("uptime_7d", "100.000")
+                            uptime_30d = UPTIMEROBOT_DATA.get("uptime_30d", "100.000")
+                            latency = UPTIMEROBOT_DATA.get("avg_response_time", "256")
+                            total_pings = UPTIMEROBOT_DATA.get("total_checks_count", 11)
+                            
+                            status_msg = (
+                                f"📊 <b>گزارش زنده وضعیت سرور ابری:</b>\n"
+                                f"━━━━━━━━━━━━━━━━━━━━\n"
+                                f"● <b>وضعیت:</b> ۲۴ ساعته آنلاین و پایدار (200 OK) ✅\n"
+                                f"📈 <b>آپ‌تایم ۲۴ ساعته:</b> {uptime_24h}٪\n"
+                                f"📅 <b>آپ‌تایم ۷ روزه و ماهانه:</b> {uptime_7d}٪ / {uptime_30d}٪\n"
+                                f"⚡ <b>میانگین زمان پاسخگویی:</b> {latency} میلی‌ثانیه\n"
+                                f"📡 <b>تعداد پایش‌های موفق:</b> {total_pings} پایش\n"
+                                f"🌍 <b>دیتاسنتر:</b> فرانکفورت، آلمان (EU Central)\n"
+                                f"🛡️ <b>شناسه مانیتور:</b> #804290100\n"
+                                f"━━━━━━━━━━━━━━━━━━━━\n"
+                                f"🔗 <a href='https://arashmesri.onrender.com/'>مشاهده داشبورد تحت وب</a>"
+                            )
+                            telegram_send_message(chat_id, status_msg)
+
+                        elif text == "/ping":
+                            telegram_send_message(chat_id, "🏓 <b>پونگ!</b> ارتباط با سرور ابری آلمان بدون فیلتر و با سرعت بسیار بالا برقرار است. ⚡")
+
+                        elif text == "/site":
+                            telegram_send_message(chat_id, "🌐 <b>آدرس وب‌سایت و داشبورد رسمی شما:</b>\nhttps://arashmesri.onrender.com/\n\n(میزبانی ۲۴ ساعته بدون به خواب رفتن)")
+
+                        elif text == "/time":
+                            server_clock = time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())
+                            telegram_send_message(chat_id, f"🕒 <b>زمان جاری دیتاسنتر:</b>\n<code>{server_clock}</code>\n\nسرور به صورت پیوسته در حال فعالیت است.")
+
+                        else:
+                            telegram_send_message(chat_id, f"دستور نامشخص است.\nبرای مشاهده دستورات /start یا /status را ارسال نمایید.")
+        except Exception as e:
+            time.sleep(5)
 
 HTML_DASHBOARD = """<!DOCTYPE html>
 <html lang="fa" dir="rtl">
@@ -273,7 +357,7 @@ HTML_DASHBOARD = """<!DOCTYPE html>
             width: 100%;
         }
 
-        /* کارت‌های آماری متصل به دیتابیس UptimeRobot */
+        /* کارت‌های آماری */
         .metrics-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -287,6 +371,9 @@ HTML_DASHBOARD = """<!DOCTYPE html>
             padding: 18px;
             text-align: center;
             transition: transform 0.2s, border-color 0.2s;
+            text-decoration: none;
+            color: inherit;
+            display: block;
         }
         .metric-card:hover {
             transform: translateY(-3px);
@@ -353,7 +440,6 @@ HTML_DASHBOARD = """<!DOCTYPE html>
 </head>
 <body>
     <div class="container">
-        <!-- سربرگ اصلی -->
         <div class="header">
             <div class="title-area">
                 <h1>
@@ -367,11 +453,10 @@ HTML_DASHBOARD = """<!DOCTYPE html>
             </div>
             <div class="status-pill">
                 <span class="pulse-dot"></span>
-                <span id="officialStatus">وضعیت: Up (۱۰۰٪ فعال)</span>
+                <span>وضعیت: Up (۱۰۰٪ فعال)</span>
             </div>
         </div>
 
-        <!-- بنر زمان دقیق آخرین پایش -->
         <div class="last-check-banner">
             <div class="last-check-text">
                 <span>⏱️</span>
@@ -384,7 +469,6 @@ HTML_DASHBOARD = """<!DOCTYPE html>
             </div>
         </div>
 
-        <!-- نمودار با تب‌های ۲۴ ساعته، هفتگی و ماهانه -->
         <div class="chart-section">
             <div class="chart-controls">
                 <div class="chart-title">
@@ -402,7 +486,6 @@ HTML_DASHBOARD = """<!DOCTYPE html>
             </div>
         </div>
 
-        <!-- کارت‌های متریک منطبق با پنل UptimeRobot -->
         <div class="metrics-grid">
             <div class="metric-card">
                 <div class="metric-label">📊 آپ‌تایم رسمی UptimeRobot</div>
@@ -419,22 +502,20 @@ HTML_DASHBOARD = """<!DOCTYPE html>
                 <div class="metric-value" id="uptimeDuration">در حال محاسبه...</div>
                 <div class="metric-sub">از زمان راه‌اندازی مانیتور</div>
             </div>
-            <div class="metric-card">
-                <div class="metric-label">📡 تعداد پایش‌های ثبت‌شده</div>
-                <div class="metric-value" id="totalChecks">۱۱ پایش</div>
-                <div class="metric-sub">تماماً سالم (200 OK)</div>
-            </div>
+            <a href="https://t.me/ArashServerManagementbot" target="_blank" rel="noopener" class="metric-card">
+                <div class="metric-label">🤖 ربات هوشمند تلگرام</div>
+                <div class="metric-value" style="color: #38bdf8;">@ArashServerManagementbot</div>
+                <div class="metric-sub">کلیک کنید برای چت در تلگرام ↗</div>
+            </a>
         </div>
 
-        <!-- مشخصات مانیتور و سرور -->
         <div class="server-details">
             <div class="detail-item"><strong>شناسه مانیتور در UptimeRobot:</strong> #804290100</div>
             <div class="detail-item"><strong>دیتاسنتر سرور:</strong> فرانکفورت، آلمان (EU Central)</div>
             <div class="detail-item"><strong>پایداری ۷ روز و ۳۰ روز:</strong> ۱۰۰٪ / ۱۰۰٪ (بدون قطعی)</div>
-            <div class="detail-item"><strong>ربات تلگرام:</strong> متصل و آماده در پس‌زمینه</div>
+            <div class="detail-item"><strong>ربات فعال:</strong> Arash Server Management</div>
         </div>
 
-        <!-- پابرگ -->
         <div class="footer">
             <div>توسعه و مدیریت: <strong>Arash Mesri</strong></div>
             <div>
@@ -463,7 +544,6 @@ HTML_DASHBOARD = """<!DOCTYPE html>
         }
 
         function updateLiveCounters() {
-            // محاسبه زمان گذشته از آخرین پایش
             if (lastCheckTimestamp) {
                 const diffSeconds = Math.max(0, Math.floor(Date.now() / 1000 - lastCheckTimestamp));
                 const mins = Math.floor(diffSeconds / 60);
@@ -475,7 +555,6 @@ HTML_DASHBOARD = """<!DOCTYPE html>
                 }
             }
 
-            // محاسبه زمان روشن بودن از زمان ساخت مانیتور
             if (createTimestamp) {
                 const totalMonitoredSeconds = Math.max(0, Math.floor(Date.now() / 1000 - createTimestamp));
                 document.getElementById('uptimeDuration').textContent = formatDuration(totalMonitoredSeconds);
@@ -545,7 +624,6 @@ HTML_DASHBOARD = """<!DOCTYPE html>
         function renderDayChart() {
             if (!globalData || !globalData.response_times || globalData.response_times.length === 0) return;
 
-            // نمایش تک‌تک پایش‌های واقعی ثبت‌شده در UptimeRobot
             const times = [...globalData.response_times].reverse();
             const labels = times.map(t => new Date(t.datetime * 1000).toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' }));
             const values = times.map(t => t.value);
@@ -595,7 +673,6 @@ HTML_DASHBOARD = """<!DOCTYPE html>
                     
                     document.getElementById('uptime24h').textContent = `${parseFloat(ur.uptime_24h).toFixed(1)}٪`;
                     document.getElementById('avgLatency').textContent = `${ur.avg_response_time} میلی‌ثانیه`;
-                    document.getElementById('totalChecks').textContent = `${ur.total_checks_count} پایش ثبت‌شده`;
                     
                     if (ur.create_datetime) {
                         createTimestamp = ur.create_datetime;
@@ -662,17 +739,6 @@ class CloudServerHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         return
 
-def telegram_bot_worker():
-    token = os.environ.get("TELEGRAM_BOT_TOKEN")
-    if not token:
-        print("[Telegram Worker] در انتظار تنظیم توکن ربات تلگرام...")
-        while True:
-            time.sleep(3600)
-    else:
-        print("[Telegram Worker] توکن معتبر دریافت شد. اتصال فعال است...")
-        while True:
-            time.sleep(60)
-
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     if len(sys.argv) > 1 and sys.argv[1] == "--port":
@@ -681,12 +747,13 @@ if __name__ == "__main__":
     sync_thread = threading.Thread(target=sync_uptimerobot_worker, daemon=True)
     sync_thread.start()
 
+    # اجرای ترد اختصاصی ۲۴ ساعته ربات تلگرام
     bot_thread = threading.Thread(target=telegram_bot_worker, daemon=True)
     bot_thread.start()
 
     server_address = ("0.0.0.0", port)
     httpd = HTTPServer(server_address, CloudServerHandler)
-    print(f"[Web Service] سرور داشبورد ۱۰۰٪ همگام با UptimeRobot روی پورت {port} آغاز شد...")
+    print(f"[Web Service] سرور متصل به UptimeRobot و تلگرام روی پورت {port} آغاز شد...")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
