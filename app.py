@@ -32,9 +32,9 @@ REMINDERS = []
 MAIN_KEYBOARD = {
     "keyboard": [
         [{"text": "📊 وضعیت زنده سرور"}, {"text": "🪙 قیمت رمزارزها"}],
-        [{"text": "🤖 چت با هوش مصنوعی"}, {"text": "⏰ تنظیم یادآور"}],
-        [{"text": "🌐 ورود به داشبورد سرور", "web_app": {"url": "https://arashmesri.onrender.com/"}}],
-        [{"text": "🏓 تست سرعت و پینگ"}, {"text": "📬 ارسال پیام به مدیر"}]
+        [{"text": "📈 بازار سهام و طلا"}, {"text": "🤖 چت با هوش مصنوعی"}],
+        [{"text": "⏰ تنظیم یادآور"}, {"text": "🏓 تست سرعت و پینگ"}],
+        [{"text": "🌐 مشاهده وب‌سایت"}, {"text": "📬 ارسال پیام به مدیر"}]
     ],
     "resize_keyboard": True,
     "is_persistent": True,
@@ -45,12 +45,11 @@ def get_status_inline_keyboard():
     return {
         "inline_keyboard": [
             [
-                {"text": "🌐 ورود به داشبورد زنده", "web_app": {"url": "https://arashmesri.onrender.com/"}},
-                {"text": "🔄 بروزرسانی وضعیت", "callback_data": "refresh_status"}
+                {"text": "🔄 بروزرسانی وضعیت سرور", "callback_data": "refresh_status"}
             ],
             [
                 {"text": "🪙 قیمت رمزارزها", "callback_data": "refresh_crypto"},
-                {"text": "🏓 تست پینگ دیتاسنتر", "callback_data": "cmd_ping"}
+                {"text": "📈 سهام، طلا و نفت", "callback_data": "refresh_stocks"}
             ]
         ]
     }
@@ -59,11 +58,24 @@ def get_crypto_inline_keyboard():
     return {
         "inline_keyboard": [
             [
-                {"text": "🔄 بروزرسانی لحظه‌ای قیمت‌ها", "callback_data": "refresh_crypto"}
+                {"text": "🔄 بروزرسانی رمزارزها", "callback_data": "refresh_crypto"},
+                {"text": "📈 بازار سهام و طلا", "callback_data": "refresh_stocks"}
             ],
             [
-                {"text": "📊 وضعیت سرور", "callback_data": "refresh_status"},
-                {"text": "🌐 باز کردن داشبورد", "web_app": {"url": "https://arashmesri.onrender.com/"}}
+                {"text": "📊 وضعیت زنده سرور", "callback_data": "refresh_status"}
+            ]
+        ]
+    }
+
+def get_stocks_inline_keyboard():
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "🔄 بروزرسانی سهام و طلا", "callback_data": "refresh_stocks"},
+                {"text": "🪙 قیمت رمزارزها", "callback_data": "refresh_crypto"}
+            ],
+            [
+                {"text": "📊 وضعیت زنده سرور", "callback_data": "refresh_status"}
             ]
         ]
     }
@@ -132,45 +144,179 @@ def sync_uptimerobot_worker():
         time.sleep(45)
         fetch_uptimerobot_now()
 
-# ----------------- خدمات هوش مصنوعی و قیمت ارز -----------------
-def get_ai_response(prompt_text):
+# ----------------- خدمات هوش مصنوعی (Google Gemini) و بازار مالی -----------------
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+DYNAMIC_GEMINI_KEY = None
+
+def get_effective_gemini_key():
+    global DYNAMIC_GEMINI_KEY
+    if DYNAMIC_GEMINI_KEY:
+        return DYNAMIC_GEMINI_KEY
+    if GEMINI_API_KEY:
+        return GEMINI_API_KEY
     try:
-        system_prompt = "You are a helpful, witty, smart AI assistant for Arash Mesri's cloud server. Answer fluently in Persian (فارسی روان و محترمانه)."
-        encoded_prompt = urllib.parse.quote(f"{system_prompt}\nUser: {prompt_text}")
-        url = f"https://text.pollinations.ai/{encoded_prompt}"
-        req = urllib.request.Request(url, headers={"user-agent": "ArashCloudBot"})
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        if os.path.exists("gemini_key.txt"):
+            with open("gemini_key.txt", "r", encoding="utf-8") as f:
+                k = f.read().strip()
+                if k:
+                    DYNAMIC_GEMINI_KEY = k
+                    return k
+    except:
+        pass
+    return None
+
+def set_gemini_key(key):
+    global DYNAMIC_GEMINI_KEY
+    DYNAMIC_GEMINI_KEY = key.strip()
+    try:
+        with open("gemini_key.txt", "w", encoding="utf-8") as f:
+            f.write(DYNAMIC_GEMINI_KEY)
+    except:
+        pass
+
+def get_ai_response(prompt_text):
+    g_key = get_effective_gemini_key()
+    
+    # اولویت ۱: ارتباط مستقیم با مدل رسمی Google Gemini 1.5 Flash
+    if g_key:
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={g_key}"
+            payload = {
+                "contents": [{"parts": [{"text": prompt_text}]}],
+                "systemInstruction": {
+                    "parts": [{"text": "شما دستیار هوش مصنوعی رسمی سرور ابری آرش مسری هستید (پشتیبانی‌شده توسط Google Gemini). پاسخ‌های دقیق، هوشمندانه، بسیار محترمانه و به زبان فارسی روان ارائه دهید."}]
+                }
+            }
+            data = json.dumps(payload).encode("utf-8")
+            req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=18) as resp:
+                res_json = json.loads(resp.read().decode("utf-8"))
+                candidates = res_json.get("candidates", [])
+                if candidates:
+                    parts = candidates[0].get("content", {}).get("parts", [])
+                    if parts:
+                        return f"✨ <b>[Google Gemini]:</b>\n\n{parts[0].get('text', '').strip()}"
+        except Exception as e:
+            print(f"[Gemini API Error]: {e}")
+
+    # اولویت ۲: پردازش ابری پرسرعت POST به عنوان فال‌بک پایدار
+    try:
+        url = "https://text.pollinations.ai/"
+        payload = {
+            "messages": [
+                {"role": "system", "content": "You are a professional AI assistant for Arash Mesri cloud server. Always answer fluently, accurately, and politely in Persian (فارسی روان و محترمانه)."},
+                {"role": "user", "content": prompt_text}
+            ],
+            "model": "openai-fast"
+        }
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json", "User-Agent": "ArashCloudBot/2.0"})
+        with urllib.request.urlopen(req, timeout=12) as resp:
             answer = resp.read().decode("utf-8").strip()
-            return answer if answer else "متاسفانه پاسخی از مدل دریافت نشد."
+            if answer and not answer.startswith("Free limit"):
+                return answer
     except Exception as e:
-        return f"خطا در ارتباط با سرویس هوش مصنوعی: {e}"
+        print(f"[Fallback AI POST Error]: {e}")
+
+    # اولویت ۳: تلاش با متد GET به عنوان مکمل
+    try:
+        encoded_prompt = urllib.parse.quote(prompt_text)
+        url = f"https://text.pollinations.ai/{encoded_prompt}?model=openai-fast"
+        req = urllib.request.Request(url, headers={"User-Agent": "ArashCloudBot/2.0"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            answer = resp.read().decode("utf-8").strip()
+            if answer and not answer.startswith("Free limit"):
+                return answer
+    except Exception as e:
+        print(f"[Fallback AI GET Error]: {e}")
+
+    return "متاسفانه در حال حاضر ارتباط با مدل هوش مصنوعی با تاخیر مواجه شد. لطفاً چند لحظه بعد تلاش کنید یا با دستور /setgemini کلید اختصاصی جیمینی خود را ثبت فرمایید."
 
 def get_crypto_prices():
+    """استعلام لحظه‌ای و پایدار نرخ رمزارزها از بایننس (Binance Global API)"""
     try:
-        url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,tether,solana,binancecoin&vs_currencies=usd&include_24hr_change=true"
-        req = urllib.request.Request(url, headers={"user-agent": "ArashCloudBot"})
+        symbols_param = json.dumps(["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "TONUSDT", "DOGEUSDT", "XRPUSDT"])
+        url = f"https://api.binance.com/api/v3/ticker/24hr?symbols={urllib.parse.quote(symbols_param)}"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
         with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            btc = data.get("bitcoin", {})
-            eth = data.get("ethereum", {})
-            usdt = data.get("tether", {})
-            sol = data.get("solana", {})
-            bnb = data.get("binancecoin", {})
+            items = json.loads(resp.read().decode("utf-8"))
+            data_map = {item["symbol"]: item for item in items}
 
-            msg = (
-                "🪙 <b>قیمت لحظه‌ای بازار رمزارزها (دلار):</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                f"🔹 <b>بیت‌کوین (BTC):</b> ${btc.get('usd', 0):,} ({btc.get('usd_24h_change', 0):+.2f}%)\n"
-                f"🔹 <b>اتریوم (ETH):</b> ${eth.get('usd', 0):,} ({eth.get('usd_24h_change', 0):+.2f}%)\n"
-                f"🔹 <b>سولانا (SOL):</b> ${sol.get('usd', 0):,} ({sol.get('usd_24h_change', 0):+.2f}%)\n"
-                f"🔹 <b>بایننس کوین (BNB):</b> ${bnb.get('usd', 0):,} ({bnb.get('usd_24h_change', 0):+.2f}%)\n"
-                f"🔹 <b>تتر (USDT):</b> ${usdt.get('usd', 0):.4f}\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "⚡ منبع رسمی: CoinGecko API"
-            )
-            return msg
+            def fmt(sym, name):
+                if sym not in data_map:
+                    return ""
+                d = data_map[sym]
+                price = float(d["lastPrice"])
+                change = float(d["priceChangePercent"])
+                icon = "🟢" if change >= 0 else "🔴"
+                if price >= 100:
+                    price_str = f"${price:,.2f}"
+                elif price >= 1:
+                    price_str = f"${price:,.4f}"
+                else:
+                    price_str = f"${price:,.5f}"
+                return f"{icon} <b>{name}:</b> {price_str} ({change:+.2f}%)"
+
+            lines = [
+                "🪙 <b>قیمت لحظه‌ای بازار رمزارزها (دلار):</b>",
+                "━━━━━━━━━━━━━━━━━━━━",
+                fmt("BTCUSDT", "بیت‌کوین (BTC)"),
+                fmt("ETHUSDT", "اتریوم (ETH)"),
+                fmt("SOLUSDT", "سولانا (SOL)"),
+                fmt("BNBUSDT", "بایننس کوین (BNB)"),
+                fmt("TONUSDT", "تون‌کوین تلگرام (TON)"),
+                fmt("XRPUSDT", "ریپل (XRP)"),
+                fmt("DOGEUSDT", "دوج‌کوین (DOGE)"),
+                "🔹 <b>تتر (USDT):</b> $1.0000",
+                "━━━━━━━━━━━━━━━━━━━━",
+                f"⚡ منبع رسمی: Binance Global API\n🕒 زمان استعلام: {time.strftime('%H:%M:%S')}"
+            ]
+            return "\n".join(l for l in lines if l)
     except Exception as e:
-        return f"خطا در استعلام قیمت‌ها: {e}"
+        return f"❌ خطا در استعلام نرخ رمزارزها: {e}"
+
+def get_stocks_prices():
+    """استعلام قیمت جهانی سهام، شاخص‌ها، طلا و نفت از Yahoo Finance"""
+    try:
+        targets = [
+            ("GC=F", "انس طلای جهانی (Gold)"),
+            ("CL=F", "نفت خام سبک (Crude Oil)"),
+            ("^GSPC", "شاخص اس‌اندپی ۵۰۰ (S&P 500)"),
+            ("^IXIC", "شاخص نزدک (Nasdaq)"),
+            ("NVDA", "سهام انویدیا (NVIDIA)"),
+            ("AAPL", "سهام اپل (Apple)"),
+            ("TSLA", "سهام تسلا (Tesla)")
+        ]
+        results = []
+        for sym, name in targets:
+            try:
+                url = f"https://query1.finance.yahoo.com/v8/finance/chart/{urllib.parse.quote(sym)}?interval=1d"
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    meta = data["chart"]["result"][0]["meta"]
+                    price = float(meta["regularMarketPrice"])
+                    prev = float(meta.get("chartPreviousClose") or meta.get("previousClose") or price)
+                    change = ((price - prev) / prev) * 100 if prev else 0.0
+                    icon = "🟢" if change >= 0 else "🔴"
+                    results.append(f"{icon} <b>{name}:</b> ${price:,.2f} ({change:+.2f}%)")
+            except:
+                pass
+
+        if not results:
+            return "❌ خطا در دریافت اطلاعات بازار سهام. لطفاً چند لحظه بعد تلاش کنید."
+
+        msg = (
+            "📈 <b>قیمت جهانی سهام، طلا و نفت (دلار):</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n" +
+            "\n".join(results) + "\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"🏛️ منبع رسمی: Yahoo Finance Global Markets\n"
+            f"🕒 زمان استعلام: {time.strftime('%H:%M:%S')}"
+        )
+        return msg
+    except Exception as e:
+        return f"❌ خطا در استعلام بازار سهام: {e}"
 
 # ----------------- هسته هوشمند ربات تلگرام -----------------
 def telegram_api_call(method, payload):
@@ -211,7 +357,6 @@ def telegram_send_message(chat_id, text, reply_markup=None, use_main_keyboard=Tr
 
     res = telegram_api_call("sendMessage", payload)
     if not res or not res.get("ok"):
-        # در صورت بروز خطای پارس HTML، به عنوان متن ساده ارسال شود
         payload.pop("parse_mode", None)
         telegram_api_call("sendMessage", payload)
 
@@ -239,27 +384,28 @@ def telegram_answer_callback(callback_query_id, text=None, show_alert=False):
         payload["show_alert"] = show_alert
     telegram_api_call("answerCallbackQuery", payload)
 
+def telegram_send_chat_action(chat_id, action="typing"):
+    """ارسال وضعیت در حال نوشتن به تلگرام"""
+    telegram_api_call("sendChatAction", {"chat_id": chat_id, "action": action})
+
 def setup_telegram_bot_commands():
-    """ثبت منوی رسمی دستورات تلگرام و دکمه وب‌اپ (Menu Button) پایین چت"""
+    """ثبت منوی رسمی دستورات تلگرام در دکمه Menu پایین چت"""
     try:
         commands = [
             {"command": "status", "description": "گزارش زنده آپ‌تایم و وضعیت سرور"},
             {"command": "crypto", "description": "قیمت لحظه‌ای بازار رمزارزها"},
-            {"command": "ai", "description": "چت و مشاوره با هوش مصنوعی"},
+            {"command": "stocks", "description": "قیمت جهانی سهام، طلا و نفت"},
+            {"command": "ai", "description": "چت و مشاوره با هوش مصنوعی جیمینی"},
+            {"command": "setgemini", "description": "تنظیم کلید Google Gemini API"},
             {"command": "remind", "description": "تنظیم یادآور هوشمند زمانی"},
             {"command": "site", "description": "آدرس وب‌سایت و داشبورد رسمی"},
             {"command": "ping", "description": "تست سرعت و پینگ دیتاسنتر"}
         ]
         telegram_api_call("setMyCommands", {"commands": commands})
 
-        # تنظیم دکمه منو در پایین چت برای باز کردن مستقیم وب‌اپلیکیشن داشبورد
-        menu_button = {
-            "type": "web_app",
-            "text": "🌐 ورود به داشبورد",
-            "web_app": {"url": "https://arashmesri.onrender.com/"}
-        }
-        telegram_api_call("setChatMenuButton", {"menu_button": menu_button})
-        print("[Telegram Setup] منوی رسمی و دکمه لمسی وب‌اپ با موفقیت در تلگرام فعال شدند.")
+        # تنظیم دکمه منو به حالت استاندارد منوی دستورات تلگرام
+        telegram_api_call("setChatMenuButton", {"menu_button": {"type": "commands"}})
+        print("[Telegram Setup] منوی رسمی دستورات تلگرام با موفقیت فعال شد.")
     except Exception as e:
         print(f"[Telegram Setup Error] {e}")
 
@@ -309,7 +455,7 @@ def format_status_message():
 def telegram_bot_worker():
     global ADMIN_CHAT_ID, REMINDERS
     setup_telegram_bot_commands()
-    print("[Telegram Bot] پردازش ربات با کیبورد لمسی دائمی، منوی رسمی و وب‌اپ آغاز شد...")
+    print("[Telegram Bot] پردازش ربات با کیبورد لمسی و منوی رسمی آغاز شد...")
     last_update_id = 0
     while True:
         try:
@@ -323,32 +469,36 @@ def telegram_bot_worker():
                 for item in updates["result"]:
                     last_update_id = item["update_id"]
 
-                    # ۱. پردازش رویدادهای کلیک روی دکمه‌های اینلاین (Callback Query)
+                    # ۱. پردازش کلیک روی دکمه‌های شیشه‌ای اینلاین (Callback Query)
                     if "callback_query" in item:
                         cq = item["callback_query"]
                         cq_id = cq["id"]
                         data = cq.get("data", "")
-                        from_user = cq.get("from", {})
                         chat_id = cq.get("message", {}).get("chat", {}).get("id")
                         msg_id = cq.get("message", {}).get("message_id")
                         ADMIN_CHAT_ID = chat_id
 
                         if data == "refresh_status":
-                            telegram_answer_callback(cq_id, text="در حال دریافت داده‌های زنده UptimeRobot...")
+                            telegram_answer_callback(cq_id, text="در حال دریافت داده‌های زنده سرور...")
                             new_text = format_status_message()
                             telegram_edit_message(chat_id, msg_id, new_text, reply_markup=get_status_inline_keyboard())
 
                         elif data == "refresh_crypto":
-                            telegram_answer_callback(cq_id, text="در حال استعلام نرخ‌های لحظه‌ای...")
+                            telegram_answer_callback(cq_id, text="در حال استعلام نرخ‌های لحظه‌ای از بایننس...")
                             crypto_msg = get_crypto_prices()
                             telegram_edit_message(chat_id, msg_id, crypto_msg, reply_markup=get_crypto_inline_keyboard())
+
+                        elif data == "refresh_stocks":
+                            telegram_answer_callback(cq_id, text="در حال استعلام نرخ‌های سهام و طلا...")
+                            stocks_msg = get_stocks_prices()
+                            telegram_edit_message(chat_id, msg_id, stocks_msg, reply_markup=get_stocks_inline_keyboard())
 
                         elif data == "cmd_ping":
                             telegram_answer_callback(cq_id, text="⚡ پینگ سرور آلمان: ~۲۵۰ms (عالی)")
 
                         continue
 
-                    # ۲. پردازش پیام‌های دریافتی از کاربران (Message)
+                    # ۲. پردازش پیام‌های کاربران (Message)
                     msg = item.get("message")
                     if not msg or "text" not in msg:
                         continue
@@ -358,18 +508,18 @@ def telegram_bot_worker():
                     raw_text = msg["text"].strip()
                     sender_name = msg["from"].get("first_name", "آرش")
 
-                    # پاک‌سازی نام کاربری ربات از دستورات (مانند /start@ArashServerManagementbot)
                     clean_cmd = raw_text.split("@")[0].strip().lower()
 
                     if clean_cmd in ("/start", "/help", "سلام", "درود", "شروع"):
                         welcome_msg = (
                             f"سلام <b>{sender_name}</b> عزیز! 👋\n"
-                            f"به سوئیچ و دستیار همه‌کاره سرور ابری (آلمان) خوش آمدید.\n\n"
-                            f"💡 <b>امکانات ویژه در دسترس شما:</b>\n"
-                            f"• دکمه‌های لمسی دائمی در پایین چت (کیبورد)\n"
-                            f"• دکمه <b>🌐 ورود به داشبورد</b> در کنار کادر پیام (Web App)\n"
-                            f"• دکمه منوی دستورات رسمی (Menu)\n\n"
-                            f"یکی از گزینه‌های زیر را لمس کنید یا سوال خود را بپرسید:"
+                            f"به دستیار هوشمند و مرکز مدیریت سرور ابری خوش آمدید.\n\n"
+                            f"💡 <b>امکانات در دسترس شما:</b>\n"
+                            f"• منوی دستورات رسمی تلگرام (دکمه <b>Menu</b> در گوشه پایین سمت چپ)\n"
+                            f"• کیبورد لمسی دکمه‌ای در پایین صفحه برای دسترسی سریع\n"
+                            f"• نرخ لحظه‌ای رمزارزها از Binance و سهام/طلا از Yahoo Finance\n"
+                            f"• گفتگوی هوشمند با مدل هوش مصنوعی Google Gemini\n\n"
+                            f"از دکمه‌های زیر یا منوی دستورات گزینه مورد نظر را انتخاب کنید:"
                         )
                         telegram_send_message(chat_id, welcome_msg, reply_markup=get_status_inline_keyboard())
 
@@ -381,11 +531,36 @@ def telegram_bot_worker():
                         prices_msg = get_crypto_prices()
                         telegram_send_message(chat_id, prices_msg, reply_markup=get_crypto_inline_keyboard())
 
+                    elif clean_cmd in ("/stocks", "📈 بازار سهام و طلا", "سهام", "طلا", "نفت", "stocks"):
+                        stocks_msg = get_stocks_prices()
+                        telegram_send_message(chat_id, stocks_msg, reply_markup=get_stocks_inline_keyboard())
+
+                    elif clean_cmd.startswith("/setgemini"):
+                        parts = raw_text.split(maxsplit=1)
+                        if len(parts) > 1 and parts[1].strip():
+                            new_key = parts[1].strip()
+                            set_gemini_key(new_key)
+                            confirm_msg = (
+                                "✅ <b>کلید اختصاصی Google Gemini با موفقیت ثبت شد!</b>\n\n"
+                                "از این لحظه تمام سوالات و چت‌های شما مستقیماً توسط مدل پیشرفته <b>Google Gemini 1.5 Flash</b> پاسخ داده خواهند شد."
+                            )
+                            telegram_send_message(chat_id, confirm_msg)
+                        else:
+                            guide_msg = (
+                                "🔑 <b>راهنمای تنظیم کلید Google Gemini:</b>\n\n"
+                                "برای اتصال به جیمینی، کافی است دستور را به این شکل بفرستید:\n"
+                                "<code>/setgemini AIzaSy...</code>\n\n"
+                                "<i>(کلید اختصاصی خود را می‌توانید به صورت رایگان از Google AI Studio دریافت کنید).</i>"
+                            )
+                            telegram_send_message(chat_id, guide_msg)
+
                     elif clean_cmd in ("🤖 چت با هوش مصنوعی", "هوش مصنوعی", "ai"):
+                        has_key = "مدل Google Gemini 1.5 Flash ✨" if get_effective_gemini_key() else "موتور پردازش ابری هوشمند"
                         telegram_send_message(
                             chat_id,
-                            "🧠 <b>حالت هوش مصنوعی فعال است:</b>\n"
-                            "هر سوال، ایده، ترجمه یا پروژه‌ای در ذهن دارید بنویسید تا فوراً پاسخ دهم."
+                            f"🧠 <b>هوش مصنوعی به صورت پیش‌فرض فعال است ({has_key}):</b>\n\n"
+                            "شما در هر لحظه <b>بدون نیاز به زدن دستور خاصی</b> می‌توانید هر پیام، سوال، ایده، ترجمه، کد برنامه‌نویسی یا درخواستی دارید را بنویسید تا فوراً پاسخ دهم.\n\n"
+                            "💡 <i>برای اتصال کلید اختصاصی Google AI Studio می‌توانید دستور <code>/setgemini YOUR_KEY</code> را ارسال فرمایید.</i>"
                         )
 
                     elif clean_cmd.startswith("/ai"):
@@ -393,14 +568,14 @@ def telegram_bot_worker():
                         if not query:
                             telegram_send_message(chat_id, "لطفاً سوال یا پیام خود را بعد از /ai بنویسید؛ مثلاً:\n<code>/ai ایده برای طراحی سایت</code>")
                         else:
-                            telegram_send_message(chat_id, "🧠 در حال پردازش با هوش مصنوعی...")
+                            telegram_send_chat_action(chat_id, "typing")
                             ai_res = get_ai_response(query)
-                            telegram_send_message(chat_id, f"🤖 <b>پاسخ هوش مصنوعی:</b>\n\n{ai_res}")
+                            telegram_send_message(chat_id, ai_res)
 
                     elif clean_cmd in ("⏰ تنظیم یادآور", "یادآور", "یاداور"):
                         telegram_send_message(
                             chat_id,
-                            "⏰ <b>راهنمای تنظیم یادآور:</b>\n"
+                            "⏰ <b>راهنمای تنظیم یادآور هوشمند:</b>\n"
                             "برای تنظیم هشدار کافی است از فرمت زیر استفاده کنید:\n"
                             "<code>/remind 10 تماس با کارفرما</code>\n"
                             "(عدد مشخص‌کننده دقیقه است)."
@@ -424,12 +599,12 @@ def telegram_bot_worker():
                             "زمان پاسخگویی مستقیم: کمتر از ۲۵۰ میلی‌ثانیه"
                         )
 
-                    elif clean_cmd in ("/site", "🌐 ورود به داشبورد سرور", "🌐 مشاهده وب‌سایت", "سایت", "site"):
+                    elif clean_cmd in ("/site", "🌐 مشاهده وب‌سایت", "سایت", "site"):
                         telegram_send_message(
                             chat_id,
                             "🌐 <b>آدرس وب‌سایت و داشبورد رسمی شما:</b>\n"
                             "https://arashmesri.onrender.com/\n\n"
-                            "می‌توانید روی دکمه زیر ضربه بزنید تا داشبورد به صورت وب‌اپلیکیشن مستقیم باز شود:",
+                            "می‌زبانی پایدار در آلمان با پایش ۲۴ ساعته.",
                             reply_markup=get_status_inline_keyboard()
                         )
 
@@ -441,10 +616,11 @@ def telegram_bot_worker():
                         )
 
                     else:
-                        # در صورت ارسال هر متن دیگر، با هوش مصنوعی پاسخ داده شود
-                        telegram_send_message(chat_id, "🧠 در حال تفکر و پردازش...")
+                        # در صورت ارسال هر متن آزاد دیگر، مستقیماً و به صورت پیش‌فرض توسط هوش مصنوعی پاسخ داده شود
+                        telegram_send_chat_action(chat_id, "typing")
                         ai_res = get_ai_response(raw_text)
-                        telegram_send_message(chat_id, f"🤖 {ai_res}")
+                        telegram_send_message(chat_id, ai_res)
+
 
         except Exception as e:
             time.sleep(5)
@@ -458,7 +634,6 @@ HTML_DASHBOARD = """<!DOCTYPE html>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>داشبورد سرور و ارتباط زنده | Arash Mesri Cloud Suite</title>
     <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1015,13 +1190,6 @@ HTML_DASHBOARD = """<!DOCTYPE html>
                 btn.disabled = false;
                 btn.innerHTML = '<span>🚀 ارسال فوری به تلگرام</span>';
             }
-        }
-
-        if (window.Telegram && window.Telegram.WebApp) {
-            try {
-                window.Telegram.WebApp.ready();
-                window.Telegram.WebApp.expand();
-            } catch (e) {}
         }
 
         initChart();
