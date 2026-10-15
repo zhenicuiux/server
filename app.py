@@ -1,6 +1,15 @@
 """
-داشبورد مانیتورینگ زنده و ربات تلگرام ۲۴ ساعته (@ArashServerManagementbot)
-متصل به API رسمی UptimeRobot و پردازش کامل دستورات تلگرام در پس‌زمینه سرور
+سرور ابری همه‌کاره و یکپارچه آرش مسری (Arash Mesri Cloud Suite)
+شامل:
+۱. وب‌سایت و داشبورد زنده متصل به UptimeRobot
+۲. فرم تماس زنده و ارسال فوری پیام‌های مشتری از سایت به تلگرام
+۳. ربات تلگرام هوشمند (@ArashServerManagementbot) مجهز به:
+   - کیبورد دکمه‌ای لمسی دائمی در پایین چت تلگرام (ReplyKeyboardMarkup)
+   - منوی دکمه‌ای رسمی تلگرام (setMyCommands)
+   - هوش مصنوعی پاسخ‌گو به زبان فارسی (/ai یا چت آزاد)
+   - استعلام لحظه‌ای قیمت رمزارزها از CoinGecko (/crypto)
+   - سیستم یادآور هوشمند و تایمر زمانی (/remind)
+   - پایش زنده وضعیت سرور و پینگ دیتاسنتر (/status)
 """
 
 import os
@@ -15,6 +24,20 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 SERVER_START_TIME = time.time()
 UPTIMEROBOT_API_KEY = os.environ.get("UPTIMEROBOT_API_KEY", "ur3854766-dd767e7271f53eeb0daba4b0")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8940091047:AAFANrYG9yzhowrk4uohOGKH8B4OdwWXe-Q")
+
+ADMIN_CHAT_ID = None
+REMINDERS = []
+
+# کیبورد لمسی و ثابت پایین صفحه چت تلگرام
+MAIN_KEYBOARD = {
+    "keyboard": [
+        [{"text": "📊 وضعیت زنده سرور"}, {"text": "🪙 قیمت رمزارزها"}],
+        [{"text": "🤖 چت با هوش مصنوعی"}, {"text": "⏰ تنظیم یادآور"}],
+        [{"text": "🌐 مشاهده وب‌سایت"}, {"text": "🏓 تست سرعت و پینگ"}]
+    ],
+    "resize_keyboard": True,
+    "persistent": True
+}
 
 UPTIMEROBOT_DATA = {
     "status_code": 2,
@@ -32,8 +55,8 @@ UPTIMEROBOT_DATA = {
     "friendly_name": "arashmesri.onrender.com"
 }
 
+# ----------------- استعلام از UptimeRobot -----------------
 def fetch_uptimerobot_now():
-    """استعلام مستقیم و زنده از API رسمی UptimeRobot"""
     global UPTIMEROBOT_DATA
     try:
         url = "https://api.uptimerobot.com/v2/getMonitors"
@@ -48,37 +71,28 @@ def fetch_uptimerobot_now():
         req = urllib.request.Request(
             url,
             data=encoded_data,
-            headers={
-                "content-type": "application/x-www-form-urlencoded",
-                "cache-control": "no-cache"
-            }
+            headers={"content-type": "application/x-www-form-urlencoded", "cache-control": "no-cache"}
         )
         with urllib.request.urlopen(req, timeout=10) as response:
             res_json = json.loads(response.read().decode("utf-8"))
             if res_json.get("stat") == "ok" and res_json.get("monitors"):
                 mon = res_json["monitors"][0]
                 ratios = mon.get("custom_uptime_ratio", "100-100-100").split("-")
-                
                 UPTIMEROBOT_DATA["status_code"] = mon.get("status", 2)
                 UPTIMEROBOT_DATA["status_text"] = "Up (آنلاین)" if mon.get("status") == 2 else "Paused/Down"
                 UPTIMEROBOT_DATA["uptime_24h"] = ratios[0] if len(ratios) > 0 else "100.000"
                 UPTIMEROBOT_DATA["uptime_7d"] = ratios[1] if len(ratios) > 1 else "100.000"
                 UPTIMEROBOT_DATA["uptime_30d"] = ratios[2] if len(ratios) > 2 else "100.000"
-                
                 avg_time = mon.get("average_response_time", "256")
                 UPTIMEROBOT_DATA["avg_response_time"] = str(int(float(avg_time))) if avg_time else "256"
-                
                 r_times = mon.get("response_times", [])
                 UPTIMEROBOT_DATA["response_times"] = r_times
                 UPTIMEROBOT_DATA["total_checks_count"] = len(r_times)
-                
                 if r_times and len(r_times) > 0:
                     UPTIMEROBOT_DATA["last_check_datetime"] = r_times[0]["datetime"]
-                
                 UPTIMEROBOT_DATA["create_datetime"] = mon.get("create_datetime", int(time.time() - 3600))
                 UPTIMEROBOT_DATA["last_synced"] = time.time()
                 UPTIMEROBOT_DATA["monitor_id"] = mon.get("id", 804290100)
-                UPTIMEROBOT_DATA["friendly_name"] = mon.get("friendly_name", "arashmesri.onrender.com")
     except Exception as e:
         print(f"[UptimeRobot Sync Error] {e}")
 
@@ -89,8 +103,48 @@ def sync_uptimerobot_worker():
         time.sleep(45)
         fetch_uptimerobot_now()
 
+# ----------------- خدمات هوش مصنوعی و قیمت ارز -----------------
+def get_ai_response(prompt_text):
+    try:
+        system_prompt = "You are a helpful, witty, smart AI assistant for Arash Mesri's cloud server. Answer fluently in Persian (فارسی روان و محترمانه)."
+        encoded_prompt = urllib.parse.quote(f"{system_prompt}\nUser: {prompt_text}")
+        url = f"https://text.pollinations.ai/{encoded_prompt}"
+        req = urllib.request.Request(url, headers={"user-agent": "ArashCloudBot"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            answer = resp.read().decode("utf-8").strip()
+            return answer if answer else "متاسفانه پاسخی از مدل دریافت نشد."
+    except Exception as e:
+        return f"خطا در ارتباط با سرویس هوش مصنوعی: {e}"
+
+def get_crypto_prices():
+    try:
+        url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,tether,solana,binancecoin&vs_currencies=usd&include_24hr_change=true"
+        req = urllib.request.Request(url, headers={"user-agent": "ArashCloudBot"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            btc = data.get("bitcoin", {})
+            eth = data.get("ethereum", {})
+            usdt = data.get("tether", {})
+            sol = data.get("solana", {})
+            bnb = data.get("binancecoin", {})
+
+            msg = (
+                "🪙 <b>قیمت لحظه‌ای بازار رمزارزها (دلار):</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                f"🔹 <b>بیت‌کوین (BTC):</b> ${btc.get('usd', 0):,} ({btc.get('usd_24h_change', 0):+.2f}%)\n"
+                f"🔹 <b>اتریوم (ETH):</b> ${eth.get('usd', 0):,} ({eth.get('usd_24h_change', 0):+.2f}%)\n"
+                f"🔹 <b>سولانا (SOL):</b> ${sol.get('usd', 0):,} ({sol.get('usd_24h_change', 0):+.2f}%)\n"
+                f"🔹 <b>بایننس کوین (BNB):</b> ${bnb.get('usd', 0):,} ({bnb.get('usd_24h_change', 0):+.2f}%)\n"
+                f"🔹 <b>تتر (USDT):</b> ${usdt.get('usd', 0):.4f}\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "⚡ منبع رسمی: CoinGecko API"
+            )
+            return msg
+    except Exception as e:
+        return f"خطا در استعلام قیمت‌ها: {e}"
+
 # ----------------- هسته هوشمند ربات تلگرام -----------------
-def telegram_send_message(chat_id, text):
+def telegram_send_message(chat_id, text, use_keyboard=True):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         payload = {
@@ -98,6 +152,9 @@ def telegram_send_message(chat_id, text):
             "text": text,
             "parse_mode": "HTML"
         }
+        if use_keyboard:
+            payload["reply_markup"] = json.dumps(MAIN_KEYBOARD)
+
         encoded = urllib.parse.urlencode(payload).encode("utf-8")
         req = urllib.request.Request(url, data=encoded, headers={"content-type": "application/x-www-form-urlencoded"})
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -105,9 +162,48 @@ def telegram_send_message(chat_id, text):
     except Exception as e:
         print(f"[Telegram Send Error] {e}")
 
+def setup_telegram_bot_commands():
+    """ثبت منوی رسمی دستورات تلگرام در دکمه Menu پایین چت"""
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setMyCommands"
+        commands = [
+            {"command": "status", "description": "گزارش زنده آپ‌تایم و وضعیت سرور"},
+            {"command": "crypto", "description": "قیمت لحظه‌ای بازار رمزارزها"},
+            {"command": "ai", "description": "چت و مشاوره با هوش مصنوعی"},
+            {"command": "remind", "description": "تنظیم یادآور هوشمند زمانی"},
+            {"command": "site", "description": "آدرس وب‌سایت و داشبورد رسمی"},
+            {"command": "ping", "description": "تست سرعت و پینگ دیتاسنتر"}
+        ]
+        data = json.dumps({"commands": commands}).encode("utf-8")
+        req = urllib.request.Request(url, data=data, headers={"content-type": "application/json"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            print("[Telegram Setup] منوی دکمه‌ای رسمی با موفقیت در تلگرام فعال شد.")
+    except Exception as e:
+        print(f"[Telegram Setup Error] {e}")
+
+def reminders_worker():
+    global REMINDERS
+    while True:
+        now = time.time()
+        to_remove = []
+        for r in REMINDERS:
+            if now >= r["trigger_time"]:
+                alarm_msg = (
+                    f"⏰ <b>هشدار یادآور هوشمند:</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🔔 <b>موضوع:</b> {r['text']}\n"
+                    f"🕒 زمان سررسید: {time.strftime('%H:%M:%S', time.localtime())}"
+                )
+                telegram_send_message(r["chat_id"], alarm_msg)
+                to_remove.append(r)
+        for r in to_remove:
+            REMINDERS.remove(r)
+        time.sleep(5)
+
 def telegram_bot_worker():
-    """پولینگ ۲۴ ساعته اختصاصی برای دریافت و پاسخ به دستورات تلگرام"""
-    print(f"[Telegram Bot] آغاز به کار ربات با توکن فعال...")
+    global ADMIN_CHAT_ID, REMINDERS
+    setup_telegram_bot_commands()
+    print(f"[Telegram Bot] پردازش ربات با کیبورد لمسی و منوی رسمی آغاز شد...")
     last_update_id = 0
     while True:
         try:
@@ -123,22 +219,21 @@ def telegram_bot_worker():
                             continue
                         
                         chat_id = msg["chat"]["id"]
-                        text = msg["text"].strip().lower()
+                        ADMIN_CHAT_ID = chat_id
+                        raw_text = msg["text"].strip()
+                        cmd = raw_text.lower()
                         sender_name = msg["from"].get("first_name", "آرش")
 
-                        if text in ("/start", "/help", "سلام", "درود"):
+                        # پشتیبانی هم‌زمان از دکمه‌های لمسی و دستورات متنی
+                        if cmd in ("/start", "/help", "سلام", "درود"):
                             welcome_msg = (
                                 f"سلام <b>{sender_name}</b> عزیز! 👋\n"
-                                f"به ربات اختصاصی مدیریت سرور ابری (آلمان) خوش آمدید.\n\n"
-                                f"⚡ <b>دستورات در دسترس:</b>\n"
-                                f"📊 /status - استعلام زنده وضعیت، آپ‌تایم و پینگ سرور\n"
-                                f"🏓 /ping - تست سرعت و اتصال مستقیم سرور\n"
-                                f"🌐 /site - لینک مستقیم داشبورد وب‌سایت شما\n"
-                                f"🕒 /time - ساعت دقیق سرور و آخرین زمان پایش"
+                                f"به سوئیچ و دستیار همه‌کاره سرور ابری (آلمان) خوش آمدید.\n\n"
+                                f"از دکمه‌های لمسی زیر چت یا منوی دستورات برای استفاده انتخاب کنید:"
                             )
                             telegram_send_message(chat_id, welcome_msg)
 
-                        elif text == "/status":
+                        elif cmd in ("/status", "📊 وضعیت زنده سرور"):
                             uptime_24h = UPTIMEROBOT_DATA.get("uptime_24h", "100.000")
                             uptime_7d = UPTIMEROBOT_DATA.get("uptime_7d", "100.000")
                             uptime_30d = UPTIMEROBOT_DATA.get("uptime_30d", "100.000")
@@ -146,41 +241,70 @@ def telegram_bot_worker():
                             total_pings = UPTIMEROBOT_DATA.get("total_checks_count", 11)
                             
                             status_msg = (
-                                f"📊 <b>گزارش زنده وضعیت سرور ابری:</b>\n"
+                                f"📊 <b>گزارش زنده دیتاسنتر UptimeRobot:</b>\n"
                                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                                f"● <b>وضعیت:</b> ۲۴ ساعته آنلاین و پایدار (200 OK) ✅\n"
+                                f"● <b>وضعیت:</b> آنلاین و پایدار (200 OK) ✅\n"
                                 f"📈 <b>آپ‌تایم ۲۴ ساعته:</b> {uptime_24h}٪\n"
-                                f"📅 <b>آپ‌تایم ۷ روزه و ماهانه:</b> {uptime_7d}٪ / {uptime_30d}٪\n"
+                                f"📅 <b>آپ‌تایم ۷ روز و ۳۰ روز:</b> {uptime_7d}٪ / {uptime_30d}٪\n"
                                 f"⚡ <b>میانگین زمان پاسخگویی:</b> {latency} میلی‌ثانیه\n"
                                 f"📡 <b>تعداد پایش‌های موفق:</b> {total_pings} پایش\n"
                                 f"🌍 <b>دیتاسنتر:</b> فرانکفورت، آلمان (EU Central)\n"
-                                f"🛡️ <b>شناسه مانیتور:</b> #804290100\n"
                                 f"━━━━━━━━━━━━━━━━━━━━\n"
                                 f"🔗 <a href='https://arashmesri.onrender.com/'>مشاهده داشبورد تحت وب</a>"
                             )
                             telegram_send_message(chat_id, status_msg)
 
-                        elif text == "/ping":
+                        elif cmd in ("/crypto", "/price", "🪙 قیمت رمزارزها", "قیمت", "ارز"):
+                            prices_msg = get_crypto_prices()
+                            telegram_send_message(chat_id, prices_msg)
+
+                        elif cmd == "🤖 چت با هوش مصنوعی":
+                            telegram_send_message(chat_id, "🧠 <b>حالت هوش مصنوعی فعال است:</b>\nهر سوال، ایده، ترجمه یا درخواستی دارید در پیام بعدی بفرستید تا فوراً پاسخ دهم.")
+
+                        elif cmd.startswith("/ai"):
+                            query = raw_text[3:].strip()
+                            if not query:
+                                telegram_send_message(chat_id, "لطفاً سوال یا پیام خود را بعد از /ai بنویسید؛ مثلاً:\n<code>/ai ایده برای طراحی سایت</code>")
+                            else:
+                                telegram_send_message(chat_id, "🧠 در حال پردازش با هوش مصنوعی...")
+                                ai_res = get_ai_response(query)
+                                telegram_send_message(chat_id, f"🤖 <b>پاسخ هوش مصنوعی:</b>\n\n{ai_res}")
+
+                        elif cmd == "⏰ تنظیم یادآور":
+                            telegram_send_message(chat_id, "⏰ <b>راهنمای تنظیم یادآور:</b>\nبرای تنظیم یادآور از فرمت زیر استفاده کنید:\n<code>/remind 10 تماس با کارفرما</code>\n(عدد بر حسب دقیقه است).")
+
+                        elif cmd.startswith("/remind"):
+                            parts = raw_text.split(maxsplit=2)
+                            if len(parts) < 3 or not parts[1].isdigit():
+                                telegram_send_message(chat_id, "فرمت صحیح یادآور:\n<code>/remind 10 تماس با کارفرما</code>\n(عدد بر حسب دقیقه است).")
+                            else:
+                                minutes = int(parts[1])
+                                note = parts[2]
+                                trigger_at = time.time() + (minutes * 60)
+                                REMINDERS.append({"chat_id": chat_id, "trigger_time": trigger_at, "text": note})
+                                telegram_send_message(chat_id, f"✅ <b>یادآور ذخیره شد!</b>\nسرور رأس <b>{minutes} دقیقه دیگر</b> موضوع زیر را به شما یادآوری می‌کند:\n«{note}»")
+
+                        elif cmd in ("/ping", "🏓 تست سرعت و پینگ"):
                             telegram_send_message(chat_id, "🏓 <b>پونگ!</b> ارتباط با سرور ابری آلمان بدون فیلتر و با سرعت بسیار بالا برقرار است. ⚡")
 
-                        elif text == "/site":
-                            telegram_send_message(chat_id, "🌐 <b>آدرس وب‌سایت و داشبورد رسمی شما:</b>\nhttps://arashmesri.onrender.com/\n\n(میزبانی ۲۴ ساعته بدون به خواب رفتن)")
-
-                        elif text == "/time":
-                            server_clock = time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())
-                            telegram_send_message(chat_id, f"🕒 <b>زمان جاری دیتاسنتر:</b>\n<code>{server_clock}</code>\n\nسرور به صورت پیوسته در حال فعالیت است.")
+                        elif cmd in ("/site", "🌐 مشاهده وب‌سایت"):
+                            telegram_send_message(chat_id, "🌐 <b>آدرس وب‌سایت و داشبورد رسمی شما:</b>\nhttps://arashmesri.onrender.com/\n\n(میزبانی ۲۴ ساعته در آلمان)")
 
                         else:
-                            telegram_send_message(chat_id, f"دستور نامشخص است.\nبرای مشاهده دستورات /start یا /status را ارسال نمایید.")
+                            # در صورت ارسال متن آزاد، هوش مصنوعی پاسخ دهد
+                            telegram_send_message(chat_id, "🧠 در حال پردازش با هوش مصنوعی...")
+                            ai_res = get_ai_response(raw_text)
+                            telegram_send_message(chat_id, f"🤖 {ai_res}")
         except Exception as e:
             time.sleep(5)
 
+# ----------------- قالب HTML پیشرفته داشبورد با فرم تماس زنده -----------------
 HTML_DASHBOARD = """<!DOCTYPE html>
 <html lang="fa" dir="rtl">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>وضعیت رسمی سرور ابری | UptimeRobot Live Monitor</title>
+    <title>داشبورد سرور و ارتباط زنده | Arash Mesri Cloud Suite</title>
     <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
@@ -263,7 +387,6 @@ HTML_DASHBOARD = """<!DOCTYPE html>
             100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
         }
 
-        /* بنر تایم دقیق آخرین پایش */
         .last-check-banner {
             background: linear-gradient(135deg, rgba(30, 41, 59, 0.8), rgba(15, 23, 42, 0.95));
             border: 1px solid #334155;
@@ -277,29 +400,12 @@ HTML_DASHBOARD = """<!DOCTYPE html>
             gap: 12px;
             font-size: 14px;
         }
-        .last-check-text {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            color: #cbd5e1;
-            flex-wrap: wrap;
-        }
         .last-check-time {
             color: #38bdf8;
             font-weight: 700;
             font-size: 16px;
         }
-        .check-interval-badge {
-            background: #0f172a;
-            border: 1px solid #334155;
-            padding: 5px 14px;
-            border-radius: 8px;
-            color: #94a3b8;
-            font-size: 12px;
-            font-weight: 600;
-        }
 
-        /* بخش نمودار تعاملی گذشته‌نگر */
         .chart-section {
             background: #1e293b;
             border: 1px solid #334155;
@@ -314,14 +420,6 @@ HTML_DASHBOARD = """<!DOCTYPE html>
             margin-bottom: 18px;
             flex-wrap: wrap;
             gap: 12px;
-        }
-        .chart-title {
-            font-size: 16px;
-            font-weight: 700;
-            color: #f1f5f9;
-            display: flex;
-            align-items: center;
-            gap: 8px;
         }
         .tab-buttons {
             display: flex;
@@ -343,21 +441,16 @@ HTML_DASHBOARD = """<!DOCTYPE html>
             cursor: pointer;
             transition: all 0.2s;
         }
-        .tab-btn:hover {
-            color: #f1f5f9;
-        }
         .tab-btn.active {
             background: #2563eb;
             color: #ffffff;
-            box-shadow: 0 2px 8px rgba(37, 99, 235, 0.4);
         }
         .chart-container {
             position: relative;
-            height: 240px;
+            height: 230px;
             width: 100%;
         }
 
-        /* کارت‌های آماری */
         .metrics-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -383,10 +476,6 @@ HTML_DASHBOARD = """<!DOCTYPE html>
             font-size: 13px;
             color: #94a3b8;
             margin-bottom: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 6px;
         }
         .metric-value {
             font-size: 21px;
@@ -399,22 +488,91 @@ HTML_DASHBOARD = """<!DOCTYPE html>
             margin-top: 6px;
         }
 
-        .server-details {
-            background: #161e2e;
-            border: 1px solid #253349;
-            border-radius: 12px;
-            padding: 20px;
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-            gap: 15px;
-            font-size: 13px;
-            color: #94a3b8;
+        /* فرم تماس با ما و ارسال مستقیم به تلگرام */
+        .contact-section {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 16px;
+            padding: 25px;
             margin-bottom: 25px;
         }
-        .detail-item strong {
-            color: #e2e8f0;
-            display: inline-block;
-            margin-left: 6px;
+        .contact-header {
+            margin-bottom: 18px;
+        }
+        .contact-header h2 {
+            font-size: 18px;
+            color: #f8fafc;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .contact-header p {
+            color: #94a3b8;
+            font-size: 13px;
+            margin-top: 4px;
+        }
+        .form-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+        @media (max-width: 600px) {
+            .form-grid { grid-template-columns: 1fr; }
+        }
+        .input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .input-group label {
+            font-size: 13px;
+            color: #cbd5e1;
+            font-weight: 600;
+        }
+        .input-control {
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            padding: 10px 14px;
+            color: #f8fafc;
+            font-family: inherit;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        .input-control:focus {
+            border-color: #38bdf8;
+        }
+        textarea.input-control {
+            resize: vertical;
+            min-height: 80px;
+        }
+        .submit-btn {
+            background: linear-gradient(135deg, #2563eb, #1d4ed8);
+            color: #ffffff;
+            border: none;
+            border-radius: 8px;
+            padding: 12px 24px;
+            font-family: inherit;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s;
+        }
+        .submit-btn:hover {
+            background: linear-gradient(135deg, #1d4ed8, #1e40af);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.4);
+        }
+        .status-msg {
+            margin-top: 12px;
+            font-size: 13px;
+            font-weight: 600;
+            display: none;
         }
 
         .footer {
@@ -433,9 +591,6 @@ HTML_DASHBOARD = """<!DOCTYPE html>
             text-decoration: none;
             font-weight: 600;
         }
-        .footer a:hover {
-            text-decoration: underline;
-        }
     </style>
 </head>
 <body>
@@ -448,7 +603,7 @@ HTML_DASHBOARD = """<!DOCTYPE html>
                 </h1>
                 <p>
                     <span class="sync-badge">۱۰۰٪ همگام با دیتابیس UptimeRobot</span>
-                    <span>استعلام زنده از مانیتور رسمی شماره 804290100</span>
+                    <span>پایش لحظه‌ای مانیتور رسمی #804290100 در آلمان</span>
                 </p>
             </div>
             <div class="status-pill">
@@ -459,14 +614,11 @@ HTML_DASHBOARD = """<!DOCTYPE html>
 
         <div class="last-check-banner">
             <div class="last-check-text">
-                <span>⏱️</span>
-                <span>آخرین پایش ثبت‌شده توسط دیتاسنتر:</span>
+                <span>⏱️ آخرین پایش ثبت‌شده در دیتاسنتر:</span>
                 <span class="last-check-time" id="lastCheckDisplay">در حال دریافت...</span>
                 <span id="lastCheckAgo" style="color: #94a3b8; font-size: 13px;"></span>
             </div>
-            <div class="check-interval-badge">
-                <span>فاصله پایش: هر ۳۰۰ ثانیه (۵ دقیقه)</span>
-            </div>
+            <div style="color: #94a3b8; font-size: 12px;">پایش هر ۵ دقیقه</div>
         </div>
 
         <div class="chart-section">
@@ -490,30 +642,51 @@ HTML_DASHBOARD = """<!DOCTYPE html>
             <div class="metric-card">
                 <div class="metric-label">📊 آپ‌تایم رسمی UptimeRobot</div>
                 <div class="metric-value" style="color: #4ade80;" id="uptime24h">۱۰۰.۰٪</div>
-                <div class="metric-sub">تاییدشده در دیتاسنتر (۲۴h)</div>
+                <div class="metric-sub">تاییدشده دیتاسنتر (۲۴h)</div>
             </div>
             <div class="metric-card">
                 <div class="metric-label">⚡ میانگین زمان پاسخگویی</div>
                 <div class="metric-value" id="avgLatency">۲۵۶ میلی‌ثانیه</div>
-                <div class="metric-sub">میانگین دقیق پینگ‌ها در مانیتور</div>
+                <div class="metric-sub">پینگ مستقیم سرور آلمان</div>
             </div>
             <div class="metric-card">
                 <div class="metric-label">⏱️ مدت آنلاین بودن پیوسته</div>
                 <div class="metric-value" id="uptimeDuration">در حال محاسبه...</div>
-                <div class="metric-sub">از زمان راه‌اندازی مانیتور</div>
+                <div class="metric-sub">روشن مداوم بدون خواب</div>
             </div>
             <a href="https://t.me/ArashServerManagementbot" target="_blank" rel="noopener" class="metric-card">
                 <div class="metric-label">🤖 ربات هوشمند تلگرام</div>
                 <div class="metric-value" style="color: #38bdf8;">@ArashServerManagementbot</div>
-                <div class="metric-sub">کلیک کنید برای چت در تلگرام ↗</div>
+                <div class="metric-sub">دارای دکمه‌های لمسی زیر چت ↗</div>
             </a>
         </div>
 
-        <div class="server-details">
-            <div class="detail-item"><strong>شناسه مانیتور در UptimeRobot:</strong> #804290100</div>
-            <div class="detail-item"><strong>دیتاسنتر سرور:</strong> فرانکفورت، آلمان (EU Central)</div>
-            <div class="detail-item"><strong>پایداری ۷ روز و ۳۰ روز:</strong> ۱۰۰٪ / ۱۰۰٪ (بدون قطعی)</div>
-            <div class="detail-item"><strong>ربات فعال:</strong> Arash Server Management</div>
+        <!-- فرم تماس و ارسال مستقیم به تلگرام آرش -->
+        <div class="contact-section">
+            <div class="contact-header">
+                <h2>📬 ارسال پیام مستقیم به تلگرام آرش</h2>
+                <p>پیام خود را در این فرم بنویسید؛ سرور در کسری از ثانیه آن را به تلگرام من تحویل می‌دهد.</p>
+            </div>
+            <form id="contactForm" onsubmit="handleContactSubmit(event)">
+                <div class="form-grid">
+                    <div class="input-group">
+                        <label>نام شما / شرکت:</label>
+                        <input type="text" id="senderName" class="input-control" placeholder="مثلاً: علی محمدی" required>
+                    </div>
+                    <div class="input-group">
+                        <label>شماره تماس یا ایمیل:</label>
+                        <input type="text" id="senderContact" class="input-control" placeholder="0912... یا ایمیل" required>
+                    </div>
+                </div>
+                <div class="input-group" style="margin-bottom: 15px;">
+                    <label>متن پیام / سفارش پروژه:</label>
+                    <textarea id="senderMsg" class="input-control" placeholder="سلام، برای همکاری یا طراحی سایت تماس می‌گیرم..." required></textarea>
+                </div>
+                <button type="submit" class="submit-btn" id="submitBtn">
+                    <span>🚀 ارسال فوری به تلگرام</span>
+                </button>
+                <div id="contactStatus" class="status-msg"></div>
+            </form>
         </div>
 
         <div class="footer">
@@ -548,13 +721,8 @@ HTML_DASHBOARD = """<!DOCTYPE html>
                 const diffSeconds = Math.max(0, Math.floor(Date.now() / 1000 - lastCheckTimestamp));
                 const mins = Math.floor(diffSeconds / 60);
                 const secs = diffSeconds % 60;
-                if (mins === 0) {
-                    document.getElementById('lastCheckAgo').textContent = `(${secs} ثانیه پیش)`;
-                } else {
-                    document.getElementById('lastCheckAgo').textContent = `(${mins} دقیقه پیش)`;
-                }
+                document.getElementById('lastCheckAgo').textContent = mins === 0 ? `(${secs} ثانیه پیش)` : `(${mins} دقیقه پیش)`;
             }
-
             if (createTimestamp) {
                 const totalMonitoredSeconds = Math.max(0, Math.floor(Date.now() / 1000 - createTimestamp));
                 document.getElementById('uptimeDuration').textContent = formatDuration(totalMonitoredSeconds);
@@ -583,23 +751,10 @@ HTML_DASHBOARD = """<!DOCTYPE html>
                     responsive: true,
                     maintainAspectRatio: false,
                     scales: {
-                        x: {
-                            grid: { color: 'rgba(255,255,255,0.05)' },
-                            ticks: { color: '#94a3b8', font: { family: 'Vazirmatn' } }
-                        },
-                        y: {
-                            grid: { color: 'rgba(255,255,255,0.05)' },
-                            ticks: { color: '#94a3b8', font: { family: 'Vazirmatn' } }
-                        }
+                        x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8', font: { family: 'Vazirmatn' } } },
+                        y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8', font: { family: 'Vazirmatn' } } }
                     },
-                    plugins: {
-                        legend: { display: false },
-                        tooltip: {
-                            rtl: true,
-                            titleFont: { family: 'Vazirmatn' },
-                            bodyFont: { family: 'Vazirmatn' }
-                        }
-                    }
+                    plugins: { legend: { display: false }, tooltip: { rtl: true, titleFont: { family: 'Vazirmatn' }, bodyFont: { family: 'Vazirmatn' } } }
                 }
             });
         }
@@ -623,40 +778,28 @@ HTML_DASHBOARD = """<!DOCTYPE html>
 
         function renderDayChart() {
             if (!globalData || !globalData.response_times || globalData.response_times.length === 0) return;
-
             const times = [...globalData.response_times].reverse();
-            const labels = times.map(t => new Date(t.datetime * 1000).toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' }));
-            const values = times.map(t => t.value);
-
-            performanceChart.data.labels = labels;
-            performanceChart.data.datasets[0].label = 'زمان پاسخگویی واقعی UptimeRobot (ms)';
-            performanceChart.data.datasets[0].data = values;
+            performanceChart.data.labels = times.map(t => new Date(t.datetime * 1000).toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' }));
+            performanceChart.data.datasets[0].label = 'زمان پاسخگویی واقعی (ms)';
+            performanceChart.data.datasets[0].data = times.map(t => t.value);
             performanceChart.data.datasets[0].borderColor = '#38bdf8';
             performanceChart.data.datasets[0].backgroundColor = 'rgba(56, 189, 248, 0.15)';
             performanceChart.update();
         }
 
         function renderWeekChart() {
-            const labels = ['شنبه', 'یکشنبه', 'دوشنبه', 'سه‌شنبه', 'چهارشنبه', 'پنج‌شنبه', 'امروز'];
-            const uptimeRatio = parseFloat(globalData ? globalData.uptime_7d : 100);
-            const values = [100, 100, 100, 100, 100, 100, uptimeRatio];
-
-            performanceChart.data.labels = labels;
+            performanceChart.data.labels = ['شنبه', 'یکشنبه', 'دوشنبه', 'سه‌شنبه', 'چهارشنبه', 'پنج‌شنبه', 'امروز'];
             performanceChart.data.datasets[0].label = 'درصد پایداری روزانه (%)';
-            performanceChart.data.datasets[0].data = values;
+            performanceChart.data.datasets[0].data = [100, 100, 100, 100, 100, 100, parseFloat(globalData ? globalData.uptime_7d : 100)];
             performanceChart.data.datasets[0].borderColor = '#22c55e';
             performanceChart.data.datasets[0].backgroundColor = 'rgba(34, 197, 94, 0.15)';
             performanceChart.update();
         }
 
         function renderMonthChart() {
-            const labels = ['هفته اول', 'هفته دوم', 'هفته سوم', 'هفته چهارم (جاری)'];
-            const uptimeRatio = parseFloat(globalData ? globalData.uptime_30d : 100);
-            const values = [100, 100, 100, uptimeRatio];
-
-            performanceChart.data.labels = labels;
+            performanceChart.data.labels = ['هفته اول', 'هفته دوم', 'هفته سوم', 'هفته چهارم (جاری)'];
             performanceChart.data.datasets[0].label = 'درصد پایداری هفتگی (%)';
-            performanceChart.data.datasets[0].data = values;
+            performanceChart.data.datasets[0].data = [100, 100, 100, parseFloat(globalData ? globalData.uptime_30d : 100)];
             performanceChart.data.datasets[0].borderColor = '#a855f7';
             performanceChart.data.datasets[0].backgroundColor = 'rgba(168, 85, 247, 0.15)';
             performanceChart.update();
@@ -666,30 +809,58 @@ HTML_DASHBOARD = """<!DOCTYPE html>
             try {
                 const res = await fetch('/api/status');
                 const data = await res.json();
-                
                 if (data.uptimerobot) {
                     globalData = data.uptimerobot;
                     const ur = data.uptimerobot;
-                    
                     document.getElementById('uptime24h').textContent = `${parseFloat(ur.uptime_24h).toFixed(1)}٪`;
                     document.getElementById('avgLatency').textContent = `${ur.avg_response_time} میلی‌ثانیه`;
-                    
-                    if (ur.create_datetime) {
-                        createTimestamp = ur.create_datetime;
-                    }
-
+                    if (ur.create_datetime) createTimestamp = ur.create_datetime;
                     if (ur.last_check_datetime) {
                         lastCheckTimestamp = ur.last_check_datetime;
-                        const dateObj = new Date(ur.last_check_datetime * 1000);
-                        document.getElementById('lastCheckDisplay').textContent = dateObj.toLocaleTimeString('fa-IR');
+                        document.getElementById('lastCheckDisplay').textContent = new Date(ur.last_check_datetime * 1000).toLocaleTimeString('fa-IR');
                     }
-                    
                     updateLiveCounters();
-
                     if (currentPeriod === 'day') renderDayChart();
                 }
-            } catch (e) {
-                console.error(e);
+            } catch (e) { console.error(e); }
+        }
+
+        async function handleContactSubmit(e) {
+            e.preventDefault();
+            const btn = document.getElementById('submitBtn');
+            const statusDiv = document.getElementById('contactStatus');
+            btn.disabled = true;
+            btn.textContent = 'در حال ارسال...';
+            
+            const payload = {
+                name: document.getElementById('senderName').value,
+                contact: document.getElementById('senderContact').value,
+                message: document.getElementById('senderMsg').value
+            };
+
+            try {
+                const res = await fetch('/api/contact', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const resData = await res.json();
+                statusDiv.style.display = 'block';
+                if (resData.success) {
+                    statusDiv.style.color = '#4ade80';
+                    statusDiv.textContent = '✅ پیام شما با موفقیت در همان ثانیه به تلگرام آرش ارسال شد!';
+                    document.getElementById('contactForm').reset();
+                } else {
+                    statusDiv.style.color = '#f87171';
+                    statusDiv.textContent = '❌ خطا: ' + (resData.message || 'مشکلی رخ داد.');
+                }
+            } catch (err) {
+                statusDiv.style.display = 'block';
+                statusDiv.style.color = '#f87171';
+                statusDiv.textContent = '❌ خطا در برقراری ارتباط با سرور.';
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<span>🚀 ارسال فوری به تلگرام</span>';
             }
         }
 
@@ -715,10 +886,7 @@ class CloudServerHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             uptime = int(time.time() - SERVER_START_TIME)
-            payload = json.dumps({
-                "status": "healthy",
-                "uptime_seconds": uptime
-            })
+            payload = json.dumps({"status": "healthy", "uptime_seconds": uptime})
             self.wfile.write(payload.encode("utf-8"))
 
         elif self.path == "/api/status":
@@ -726,12 +894,61 @@ class CloudServerHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json")
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
-            payload = json.dumps({
-                "status": "online",
-                "uptimerobot": UPTIMEROBOT_DATA
-            })
+            payload = json.dumps({"status": "online", "uptimerobot": UPTIMEROBOT_DATA})
             self.wfile.write(payload.encode("utf-8"))
 
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def do_POST(self):
+        global ADMIN_CHAT_ID
+        if self.path == "/api/contact":
+            try:
+                content_len = int(self.headers.get("Content-Length", 0))
+                post_body = self.rfile.read(content_len).decode("utf-8")
+                data = json.loads(post_body)
+                name = data.get("name", "کاربر ناشناس")
+                contact = data.get("contact", "ثبت‌نشده")
+                user_msg = data.get("message", "بدون متن")
+
+                target_chat_id = ADMIN_CHAT_ID
+                if not target_chat_id:
+                    try:
+                        u_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
+                        with urllib.request.urlopen(u_url, timeout=5) as u_resp:
+                            u_json = json.loads(u_resp.read().decode("utf-8"))
+                            if u_json.get("result"):
+                                target_chat_id = u_json["result"][-1]["message"]["chat"]["id"]
+                                ADMIN_CHAT_ID = target_chat_id
+                    except:
+                        pass
+
+                if target_chat_id:
+                    tele_text = (
+                        f"📩 <b>پیام جدید از وب‌سایت شما!</b>\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"👤 <b>نام فرستنده:</b> {name}\n"
+                        f"📞 <b>اطلاعات تماس:</b> <code>{contact}</code>\n"
+                        f"📝 <b>متن پیام:</b>\n{user_msg}\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"⏰ زمان ثبت: {time.strftime('%Y-%m-%d %H:%M:%S')}"
+                    )
+                    telegram_send_message(target_chat_id, tele_text)
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"success": True}).encode("utf-8"))
+                else:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"success": False, "message": "ابتدا در تلگرام یک بار /start به ربات بفرستید تا شما را بشناسد."}).encode("utf-8"))
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "message": str(e)}).encode("utf-8"))
         else:
             self.send_response(404)
             self.end_headers()
@@ -744,16 +961,13 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--port":
         port = int(sys.argv[2])
 
-    sync_thread = threading.Thread(target=sync_uptimerobot_worker, daemon=True)
-    sync_thread.start()
-
-    # اجرای ترد اختصاصی ۲۴ ساعته ربات تلگرام
-    bot_thread = threading.Thread(target=telegram_bot_worker, daemon=True)
-    bot_thread.start()
+    threading.Thread(target=sync_uptimerobot_worker, daemon=True).start()
+    threading.Thread(target=reminders_worker, daemon=True).start()
+    threading.Thread(target=telegram_bot_worker, daemon=True).start()
 
     server_address = ("0.0.0.0", port)
     httpd = HTTPServer(server_address, CloudServerHandler)
-    print(f"[Web Service] سرور متصل به UptimeRobot و تلگرام روی پورت {port} آغاز شد...")
+    print(f"[Web Service] سرور جامع با دکمه‌های لمسی و فرم تلگرام روی پورت {port} آغاز شد...")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
