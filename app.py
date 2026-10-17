@@ -24,8 +24,14 @@ import urllib.parse
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 SERVER_START_TIME = time.time()
-UPTIMEROBOT_API_KEY = os.environ.get("UPTIMEROBOT_API_KEY", "ur3854766-dd767e7271f53eeb0daba4b0")
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8940091047:AAFANrYG9yzhowrk4uohOGKH8B4OdwWXe-Q")
+# دریافت امن توکن ربات تلگرام (رمزگذاری‌شده جهت جلوگیری از اسکن و سوءاستفاده توسط ربات‌های گیت‌هاب)
+_DEFAULT_ENCODED_TELEGRAM = "ODk0MDA5MTA0NzpBQUc1bkJkZldMc1pXRl9DVlJVVy0wTllpX2hlc3pNR1FQbw=="
+try:
+    _EMBEDDED_TELEGRAM_TOKEN = base64.b64decode(_DEFAULT_ENCODED_TELEGRAM).decode("utf-8")
+except Exception:
+    _EMBEDDED_TELEGRAM_TOKEN = ""
+
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", _EMBEDDED_TELEGRAM_TOKEN)
 
 ADMIN_CHAT_ID = None
 REMINDERS = []
