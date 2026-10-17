@@ -18,10 +18,20 @@ import time
 import threading
 import json
 import base64
+import tempfile
+import asyncio
+import re
 import concurrent.futures
 import urllib.request
 import urllib.parse
+import requests
 from http.server import HTTPServer, BaseHTTPRequestHandler
+
+try:
+    import edge_tts
+    HAS_EDGE_TTS = True
+except ImportError:
+    HAS_EDGE_TTS = False
 
 SERVER_START_TIME = time.time()
 # دریافت امن توکن ربات تلگرام (رمزگذاری‌شده جهت جلوگیری از اسکن و سوءاستفاده توسط ربات‌های گیت‌هاب)
@@ -35,6 +45,10 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", _EMBEDDED_TELEGRAM_TOK
 
 ADMIN_CHAT_ID = None
 REMINDERS = []
+
+# تنظیمات پیشرفته دستیار صوتی هوش مصنوعی
+VOICE_REPLY_AUTO = True  # ارسال خودکار وویس به همراه پاسخ‌های متنی
+CURRENT_VOICE_SPEAKER = "fa-IR-FaridNeural"  # گوینده صدای طبیعی: فرید (مرد) یا fa-IR-DilaraNeural (زن)
 
 # کیبورد لمسی و ثابت پایین صفحه چت تلگرام (ReplyKeyboardMarkup) - بهینه‌شده، سبک و بدون دکمه‌های زائد
 MAIN_KEYBOARD = {
@@ -571,6 +585,59 @@ def get_ai_voice_response(b64_audio, mime_type="audio/ogg"):
 
     return "❌ متاسفانه پردازش فایل صوتی با مشکل مواجه شد. لطفاً چند لحظه بعد تلاش کنید یا سوال خود را به صورت متنی ارسال فرمایید."
 
+# ----------------- موتور تولید صدای طبیعی هوش مصنوعی (Text to Speech) -----------------
+async def _synthesize_edge_tts(clean_text, output_file, voice):
+    communicate = edge_tts.Communicate(clean_text, voice)
+    await communicate.save(output_file)
+
+def clean_text_for_tts(text):
+    """پاکسازی تگ‌های HTML، لینک‌ها، ایموجی‌ها و کدهای برنامه‌نویسی جهت ارائه صدای روان و انسانی"""
+    t = re.sub(r'<[^>]+>', ' ', text)
+    t = re.sub(r'\[.*?\]', ' ', t)
+    t = re.sub(r'[*_`#~]', ' ', t)
+    t = re.sub(r'https?://\S+', ' ', t)
+    t = re.sub(r'\s+', ' ', t).strip()
+    return t
+
+def generate_tts_audio_bytes(text, voice=None):
+    """تولید بایت‌های فایل صوتی MP3 با صدای طبیعی فارسی هوش مصنوعی مایکروسافت"""
+    if voice is None:
+        voice = CURRENT_VOICE_SPEAKER
+    try:
+        clean_text = clean_text_for_tts(text)
+        if not clean_text:
+            return None
+
+        # محدودسازی هوشمند طول گفتار به حداکثر ۶۵۰ کاراکتر برای پاسخ صوتی پرسرعت، سبک و بدون معطلی
+        if len(clean_text) > 650:
+            last_period = clean_text[:650].rfind('.')
+            if last_period > 250:
+                clean_text = clean_text[:last_period + 1]
+            else:
+                clean_text = clean_text[:650] + "..."
+
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tf:
+            temp_path = tf.name
+
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(_synthesize_edge_tts(clean_text, temp_path, voice))
+            loop.close()
+
+            with open(temp_path, "rb") as f:
+                audio_bytes = f.read()
+            return audio_bytes
+        finally:
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except Exception:
+                    pass
+    except Exception as e:
+        print(f"[TTS Synthesis Error]: {e}")
+        return None
+
 # ----------------- هسته هوشمند ربات تلگرام -----------------
 def telegram_api_call(method, payload):
     """ارسال درخواست به تلگرام با فرمت استاندارد JSON"""
@@ -638,8 +705,49 @@ def telegram_answer_callback(callback_query_id, text=None, show_alert=False):
     telegram_api_call("answerCallbackQuery", payload)
 
 def telegram_send_chat_action(chat_id, action="typing"):
-    """ارسال وضعیت در حال نوشتن به تلگرام"""
+    """ارسال وضعیت در حال نوشتن یا ضبط صدا به تلگرام"""
     telegram_api_call("sendChatAction", {"chat_id": chat_id, "action": action})
+
+def telegram_send_voice(chat_id, voice_bytes, caption=None, reply_markup=None):
+    """ارسال مستقیم فایل صوتی به تلگرام (به صورت حباب صوتی / Voice Note با شکل‌موج)"""
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVoice"
+        files = {
+            "voice": ("voice.mp3", voice_bytes, "audio/mpeg")
+        }
+        data = {"chat_id": chat_id}
+        if caption:
+            data["caption"] = caption[:1024]
+            data["parse_mode"] = "HTML"
+        if reply_markup is not None:
+            data["reply_markup"] = json.dumps(reply_markup)
+
+        resp = requests.post(url, data=data, files=files, timeout=30)
+        res_json = resp.json()
+        if not res_json.get("ok"):
+            audio_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendAudio"
+            files_audio = {"audio": ("response.mp3", voice_bytes, "audio/mpeg")}
+            resp2 = requests.post(audio_url, data=data, files=files_audio, timeout=30)
+            return resp2.json()
+        return res_json
+    except Exception as e:
+        print(f"[telegram_send_voice Error]: {e}")
+        return None
+
+def send_ai_response_with_voice(chat_id, text_response, force_voice=False):
+    """ارسال پاسخ متنی هوش مصنوعی به همراه وویس صوتی همزمان (مکالمه صوتی دوطرفه طبیعی)"""
+    telegram_send_message(chat_id, text_response)
+
+    if VOICE_REPLY_AUTO or force_voice:
+        def _voice_sender():
+            try:
+                telegram_send_chat_action(chat_id, "record_voice")
+                audio = generate_tts_audio_bytes(text_response)
+                if audio:
+                    telegram_send_voice(chat_id, audio, caption="🎙️ <i>پاسخ صوتی هوش مصنوعی</i>")
+            except Exception as e:
+                print(f"[Voice Send Async Error]: {e}")
+        threading.Thread(target=_voice_sender, daemon=True).start()
 
 def setup_telegram_bot_commands():
     """ثبت منوی رسمی دستورات تلگرام در دکمه Menu پایین چت - بهینه‌شده و بدون دستورات تکراری"""
@@ -650,6 +758,7 @@ def setup_telegram_bot_commands():
             {"command": "stocks", "description": "📈 قیمت جهانی طلا، نفت و شاخص‌های بورس"},
             {"command": "weather", "description": "🌤️ ایستگاه هواشناسی زنده ایران و جهان"},
             {"command": "image", "description": "🎨 تولید تصویر با هوش مصنوعی (/image)"},
+            {"command": "voice", "description": "🎙️ تنظیمات پاسخ صوتی و وویس (/voice)"},
             {"command": "remind", "description": "⏰ تنظیم یادآور هوشمند زمانی (/remind)"},
             {"command": "setgemini", "description": "🔑 تنظیم کلید اختصاصی Google Gemini"}
         ]
@@ -799,7 +908,7 @@ def telegram_bot_worker():
 
                                     mime_type = voice_info.get("mime_type", "audio/ogg")
                                     v_res = get_ai_voice_response(b64_audio, mime_type=mime_type)
-                                    telegram_send_message(chat_id, v_res)
+                                    send_ai_response_with_voice(chat_id, v_res, force_voice=True)
                                 except Exception as e:
                                     telegram_send_message(chat_id, f"❌ خطا در پردازش پیام صوتی: {e}")
                             else:
@@ -938,7 +1047,53 @@ def telegram_bot_worker():
                         else:
                             telegram_send_chat_action(chat_id, "typing")
                             ai_res = get_ai_response(query)
-                            telegram_send_message(chat_id, ai_res)
+                            send_ai_response_with_voice(chat_id, ai_res)
+
+                    elif clean_cmd.startswith(("/voice", "/sound")) or clean_cmd in ("وویس", "صدا", "حالت صوتی", "تنظیمات وویس"):
+                        parts = raw_text.split()
+                        if len(parts) > 1:
+                            sub = parts[1].strip().lower()
+                            if sub in ("on", "فعال", "روشن", "1", "بله"):
+                                VOICE_REPLY_AUTO = True
+                                telegram_send_message(
+                                    chat_id,
+                                    "🎙️ <b>حالت پاسخ صوتی خودکار فعال شد!</b>\n"
+                                    "━━━━━━━━━━━━━━━━━━━━\n"
+                                    "از این لحظه هوش مصنوعی به تمام پیام‌های شما علاوه بر پاسخ متنی، <b>وویس صوتی اختصاصی</b> نیز ارسال خواهد کرد."
+                                )
+                            elif sub in ("off", "غیرفعال", "خاموش", "0", "خیر"):
+                                VOICE_REPLY_AUTO = False
+                                telegram_send_message(
+                                    chat_id,
+                                    "🔇 <b>حالت پاسخ صوتی خودکار خاموش شد.</b>\n"
+                                    "━━━━━━━━━━━━━━━━━━━━\n"
+                                    "پاسخ‌ها به صورت متنی ارسال می‌شوند (اما هر زمان که شما وویس بفرستید یا بنویسید «صوتی بگو»، متقابلاً با وویس پاسخ داده می‌شود)."
+                                )
+                            elif sub in ("زن", "dilara", "خانم", "دلارا", "دلارام"):
+                                CURRENT_VOICE_SPEAKER = "fa-IR-DilaraNeural"
+                                telegram_send_message(chat_id, "👩 <b>گوینده صوتی روی صدای «دل‌آرا» (خانم) با لحن طبیعی تنظیم شد.</b>")
+                            elif sub in ("مرد", "farid", "آقا", "فرید"):
+                                CURRENT_VOICE_SPEAKER = "fa-IR-FaridNeural"
+                                telegram_send_message(chat_id, "👨 <b>گوینده صوتی روی صدای «فرید» (آقا) با لحن طبیعی تنظیم شد.</b>")
+                            else:
+                                telegram_send_message(chat_id, "راهنمای دستور وویس:\n<code>/voice on</code> (روشن)\n<code>/voice off</code> (خاموش)\n<code>/voice زن</code> یا <code>/voice مرد</code>")
+                        else:
+                            VOICE_REPLY_AUTO = not VOICE_REPLY_AUTO
+                            st_txt = "🟢 فعال (ارسال وویس برای تمام پیام‌ها)" if VOICE_REPLY_AUTO else "🔴 غیرفعال (پاسخ متنی + وویس اختصاصی در صورت ارسال صوت)"
+                            spk_txt = "دل‌آرا (خانم)" if "Dilara" in CURRENT_VOICE_SPEAKER else "فرید (آقا)"
+                            telegram_send_message(
+                                chat_id,
+                                f"🎙️ <b>تنظیمات دستیار صوتی هوش مصنوعی:</b>\n"
+                                f"━━━━━━━━━━━━━━━━━━━━\n"
+                                f"🔊 <b>ارسال وویس خودکار:</b> {st_txt}\n"
+                                f"🗣️ <b>گوینده صدا:</b> {spk_txt}\n"
+                                f"━━━━━━━━━━━━━━━━━━━━\n"
+                                f"💡 <i>دستورات کاربردی:</i>\n"
+                                f"• روشن کردن: <code>/voice on</code>\n"
+                                f"• خاموش کردن: <code>/voice off</code>\n"
+                                f"• تغییر به صدای خانم: <code>/voice زن</code>\n"
+                                f"• تغییر به صدای آقا: <code>/voice مرد</code>"
+                            )
 
                     elif clean_cmd in ("⏰ یادآور هوشمند زمانی", "⏰ تنظیم یادآور", "یادآور", "یاداور"):
                         telegram_send_message(
@@ -991,8 +1146,9 @@ def telegram_bot_worker():
                     else:
                         # در صورت ارسال هر متن آزاد دیگر، مستقیماً و به صورت پیش‌فرض توسط هوش مصنوعی پاسخ داده شود
                         telegram_send_chat_action(chat_id, "typing")
+                        req_voice = any(w in raw_text for w in ["وویس بده", "با وویس", "صوتی بگو", "با صدا", "بخون", "صوتی", "وویس بفرست", "وویس بگو"])
                         ai_res = get_ai_response(raw_text)
-                        telegram_send_message(chat_id, ai_res)
+                        send_ai_response_with_voice(chat_id, ai_res, force_voice=req_voice)
 
 
         except Exception as e:
