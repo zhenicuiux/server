@@ -47,7 +47,7 @@ ADMIN_CHAT_ID = None
 REMINDERS = []
 
 # تنظیمات پیشرفته دستیار صوتی هوش مصنوعی
-VOICE_REPLY_AUTO = True  # ارسال خودکار وویس به همراه پاسخ‌های متنی
+VOICE_REPLY_AUTO = False  # ارسال وویس فقط زمانی انجام می‌شود که کاربر از قبل وویس فرستاده باشد
 CURRENT_VOICE_SPEAKER = "fa-IR-FaridNeural"  # گوینده صدای طبیعی: فرید (مرد) یا fa-IR-DilaraNeural (زن)
 
 # کیبورد لمسی و ثابت پایین صفحه چت تلگرام (ReplyKeyboardMarkup) - بهینه‌شده، سبک و بدون دکمه‌های زائد
@@ -637,6 +637,54 @@ def generate_tts_audio_bytes(text, voice=None):
         print(f"[TTS Synthesis Error]: {e}")
         return None
 
+def generate_gemini_native_audio(text, voice_name="Puck"):
+    """تولید مستقیم صدای هوش مصنوعی توسط مدل‌های بومی Google Gemini (Native Audio Speech Generation)"""
+    g_key = get_effective_gemini_key()
+    if not g_key:
+        return None
+    try:
+        clean_text = clean_text_for_tts(text)
+        if not clean_text:
+            return None
+        if len(clean_text) > 500:
+            last_p = clean_text[:500].rfind('.')
+            clean_text = clean_text[:last_p + 1] if last_p > 200 else clean_text[:500]
+
+        for model in ["gemini-3.8-flash-tts", "gemini-2.5-flash-preview-tts"]:
+            try:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={g_key}"
+                payload = {
+                    "contents": [{"role": "user", "parts": [{"text": clean_text}]}],
+                    "generationConfig": {
+                        "responseModalities": ["AUDIO"],
+                        "speechConfig": {
+                            "voiceConfig": {
+                                "prebuiltVoiceConfig": {
+                                    "voiceName": voice_name
+                                }
+                            }
+                        }
+                    }
+                }
+                data = json.dumps(payload).encode("utf-8")
+                req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json; charset=utf-8"})
+                with urllib.request.urlopen(req, timeout=12) as resp:
+                    res_json = json.loads(resp.read().decode("utf-8"))
+                    candidates = res_json.get("candidates", [])
+                    if candidates:
+                        parts = candidates[0].get("content", {}).get("parts", [])
+                        for p in parts:
+                            if "inlineData" in p:
+                                b64 = p["inlineData"].get("data")
+                                if b64:
+                                    return base64.b64decode(b64)
+            except Exception as e:
+                print(f"[Gemini Native Audio Error - {model}]: {e}")
+        return None
+    except Exception as e:
+        print(f"[Gemini Audio Gen Error]: {e}")
+        return None
+
 # ----------------- هسته هوشمند ربات تلگرام -----------------
 def telegram_api_call(method, payload):
     """ارسال درخواست به تلگرام با فرمت استاندارد JSON"""
@@ -711,8 +759,15 @@ def telegram_send_voice(chat_id, voice_bytes, caption=None, reply_markup=None):
     """ارسال مستقیم فایل صوتی به تلگرام (به صورت حباب صوتی / Voice Note با شکل‌موج)"""
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVoice"
+        if voice_bytes.startswith(b"RIFF"):
+            fname = "voice.wav"
+            mimetype = "audio/wav"
+        else:
+            fname = "voice.mp3"
+            mimetype = "audio/mpeg"
+
         files = {
-            "voice": ("voice.mp3", voice_bytes, "audio/mpeg")
+            "voice": (fname, voice_bytes, mimetype)
         }
         data = {"chat_id": chat_id}
         if caption:
@@ -725,7 +780,7 @@ def telegram_send_voice(chat_id, voice_bytes, caption=None, reply_markup=None):
         res_json = resp.json()
         if not res_json.get("ok"):
             audio_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendAudio"
-            files_audio = {"audio": ("response.mp3", voice_bytes, "audio/mpeg")}
+            files_audio = {"audio": (fname, voice_bytes, mimetype)}
             resp2 = requests.post(audio_url, data=data, files=files_audio, timeout=30)
             return resp2.json()
         return res_json
@@ -734,14 +789,19 @@ def telegram_send_voice(chat_id, voice_bytes, caption=None, reply_markup=None):
         return None
 
 def send_ai_response_with_voice(chat_id, text_response, force_voice=False):
-    """ارسال پاسخ متنی هوش مصنوعی به همراه وویس صوتی همزمان (مکالمه صوتی دوطرفه طبیعی)"""
+    """ارسال پاسخ متنی هوش مصنوعی؛ وویس تنها در صورتی ارسال می‌شود که کاربر از قبل وویس داده باشد (force_voice=True)"""
     telegram_send_message(chat_id, text_response)
 
-    if VOICE_REPLY_AUTO or force_voice:
+    # ارسال وویس فقط و فقط در صورتی انجام شود که force_voice=True باشد (یعنی کاربر وویس داده باشد) یا ارسال خودکار فعال باشد
+    if force_voice or VOICE_REPLY_AUTO:
         def _voice_sender():
             try:
                 telegram_send_chat_action(chat_id, "record_voice")
-                audio = generate_tts_audio_bytes(text_response)
+                # تلاش اول: تولید صدای بومی و زنده مدل Gemini Native Audio (صوت مستقیم هوش مصنوعی)
+                audio = generate_gemini_native_audio(text_response)
+                # تلاش دوم: در صورت عدم در دسترس بودن، فال‌بک به صدای مایکروسافت
+                if not audio:
+                    audio = generate_tts_audio_bytes(text_response)
                 if audio:
                     telegram_send_voice(chat_id, audio)
             except Exception as e:
