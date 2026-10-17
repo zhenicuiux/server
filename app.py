@@ -126,7 +126,7 @@ def get_stocks_inline_keyboard():
     return {
         "inline_keyboard": [
             [
-                {"text": "🔄 به‌روزرسانی لحظه‌ای طلا و بورس", "callback_data": "refresh_stocks"}
+                {"text": "🔄 به‌روزرسانی طلا، ارز و بورس", "callback_data": "refresh_stocks"}
             ]
         ]
     }
@@ -339,7 +339,7 @@ def get_weather_report(city_input="تهران"):
 # ----------------- حافظه موقت (Cache) بازار مالی و به‌روزرسانی موازی -----------------
 MARKET_CACHE = {
     "last_fetched": 0,
-    "summary": "بیت‌کوین: $81,400 | اتریوم: $2,410 | طلا: $2,720 | نفت: $74.50",
+    "summary": "دلار: ۲۶۳,۸۰۰ تومان | طلا ۱۸ عیار: ۲۶,۱۸۲,۰۰۰ تومان | سکه امامی: ۲۶۵,۹۷۵,۰۰۰ تومان | بیت‌کوین: $81,400 | انس جهانی طلا: $4,166",
     "crypto_text": "",
     "stocks_text": ""
 }
@@ -523,8 +523,78 @@ def fetch_top_20_crypto_data():
 
     return items
 
+def fetch_iran_market_data():
+    """استعلام زنده طلا، سکه، دلار و یورو بازار آزاد ایران با ۲ لایه پایداری (JSON API -> TGJU Homepage Scraper)"""
+    res = {}
+
+    # لایه ۱: استعلام فوق‌سریع از وب‌سرویس JSON
+    try:
+        url = "https://nerkh.jahankhahan.shop/data/live.json"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            rates = data.get("rates", {})
+            changes = data.get("change", {})
+            if rates.get("dollar") or rates.get("gold") or rates.get("coin"):
+                res = {
+                    "dollar": {"price": rates.get("dollar"), "change": changes.get("dollar", 0.0)},
+                    "euro": {"price": rates.get("euro"), "change": changes.get("euro", 0.0)},
+                    "gold18": {"price": rates.get("gold"), "change": changes.get("gold", 0.0)},
+                    "coin_emami": {"price": rates.get("coin"), "change": changes.get("coin", 0.0)},
+                    "coin_bahar": {"price": rates.get("bahar"), "change": changes.get("bahar", 0.0)},
+                    "coin_half": {"price": rates.get("half"), "change": changes.get("half", 0.0)},
+                    "coin_quarter": {"price": rates.get("quarter"), "change": changes.get("quarter", 0.0)}
+                }
+                return res
+    except Exception as e:
+        print(f"[Iran Market API Notice]: {e}")
+
+    # لایه ۲: فال‌بک به اسکرپر زنده پرسرعت صفحه اصلی TGJU
+    try:
+        tgju_url = "https://www.tgju.org/"
+        req = urllib.request.Request(tgju_url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            html = resp.read().decode("utf-8", errors="ignore")
+            mapping = {
+                "dollar": "price_dollar_rl",
+                "euro": "price_eur",
+                "gold18": "geram18",
+                "coin_emami": "sekee"
+            }
+            for key_name, row_id in mapping.items():
+                m = re.search(r'data-market-row="' + row_id + r'"[^>]*>([\s\S]*?)</tr>', html)
+                if m:
+                    row_html = m.group(1)
+                    p_match = re.search(r'<td class="nf">([^<]+)</td>', row_html)
+                    price_val = 0
+                    if p_match:
+                        raw_num = re.sub(r'[, ]', '', p_match.group(1))
+                        try:
+                            # تبدیل ریال به تومان
+                            price_val = int(round(float(raw_num) / 10.0))
+                        except:
+                            price_val = 0
+
+                    ch_match = re.search(r'<td class="nf"><span class="([a-z]+)">\(([0-9.]+)%\)', row_html)
+                    change_val = 0.0
+                    if ch_match:
+                        try:
+                            sign = -1.0 if ch_match.group(1) == "low" else 1.0
+                            change_val = float(ch_match.group(2)) * sign
+                        except:
+                            change_val = 0.0
+
+                    if price_val > 0:
+                        res[key_name] = {"price": price_val, "change": change_val}
+            if res:
+                return res
+    except Exception as e:
+        print(f"[TGJU Scraper Fallback Error]: {e}")
+
+    return res
+
 def update_market_cache_force():
-    """استعلام موازی و سریع داده‌های بازار مالی (۲۰ رمزارز برتر + شاخص‌های طلا، نفت و بورس)"""
+    """استعلام موازی و سریع داده‌های بازار مالی (طلا، سکه و ارز ایران + ۲۰ رمزارز + شاخص‌های طلا، نفت و بورس جهانی)"""
     global MARKET_CACHE
 
     stock_items = [
@@ -560,14 +630,17 @@ def update_market_cache_force():
             return (None, None)
 
     try:
-        # استعلام همزمان ارزهای دیجیتال و شاخص‌های بورس جهانی
-        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+        # استعلام همزمان بازار طلا/ارز ایران، ارزهای دیجیتال و بورس جهانی
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            iran_future = executor.submit(fetch_iran_market_data)
             crypto_future = executor.submit(fetch_top_20_crypto_data)
             stock_futures = [executor.submit(fetch_yf, item) for item in stock_items]
 
+            iran_data = iran_future.result()
             crypto_list = crypto_future.result()
             stock_res = [f.result() for f in stock_futures]
 
+        # ۱. پردازش ارزهای دیجیتال (۲۰ رمزارز برتر)
         c_formatted = []
         c_raw = []
         for coin in crypto_list:
@@ -580,6 +653,30 @@ def update_market_cache_force():
             c_formatted.append(f"{rank:02d}. {icon} <b>{display_name}:</b> <code>{price_str}</code> ({change_str})")
             c_raw.append(f"{rank}. {display_name}: {price_str} ({change_str})")
 
+        # ۲. پردازش طلا، سکه، دلار و یورو داخلی
+        iran_lines = []
+        iran_raw = []
+        if iran_data:
+            order = [
+                ("dollar", "💵", "دلار بازار آزاد"),
+                ("euro", "💶", "یورو بازار آزاد"),
+                ("gold18", "🟡", "گرم طلای ۱۸ عیار"),
+                ("coin_emami", "🪙", "سکه تمام امامی"),
+                ("coin_bahar", "🪙", "سکه بهار آزادی"),
+                ("coin_half", "🔹", "نیم سکه"),
+                ("coin_quarter", "🔹", "ربع سکه")
+            ]
+            for k, ico, title in order:
+                item = iran_data.get(k)
+                if item and item.get("price"):
+                    p = item["price"]
+                    ch = item.get("change", 0.0)
+                    ch_icon, ch_str = format_crypto_change_icon(ch)
+                    p_formatted = f"{p:,} تومان"
+                    iran_lines.append(f"{ico} <b>{title}:</b> <code>{p_formatted}</code> ({ch_icon} {ch_str})")
+                    iran_raw.append(f"{title}: {p_formatted} ({ch_str})")
+
+        # ۳. پردازش شاخص‌ها و بورس جهانی
         s_formatted = [f for f, r in stock_res if f]
         s_raw = [r for f, r in stock_res if r]
 
@@ -592,18 +689,31 @@ def update_market_cache_force():
                 "━━━━━━━━━━━━━━━━━━━━\n"
                 f"⚡ <b>منابع رسمی:</b> رتبه‌بندی زنده CoinGecko & CoinPaprika\n🕒 <b>زمان استعلام:</b> <code>{time_str}</code> (به وقت تهران)"
             )
+
+        stocks_parts = []
+        if iran_lines:
+            stocks_parts.append(
+                "🇮🇷 <b>بازار طلا، سکه و ارز ایران (تومان):</b>\n" +
+                "\n".join(iran_lines)
+            )
         if s_formatted:
-            MARKET_CACHE["stocks_text"] = (
-                "📈 <b>شاخص‌های بازار جهانی، طلا و نفت خام (دلار):</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n" +
-                "\n".join(s_formatted) + "\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                f"🏛️ <b>منبع رسمی:</b> Yahoo Finance Global Markets\n🕒 <b>زمان استعلام:</b> <code>{time_str}</code> (به وقت تهران)"
+            stocks_parts.append(
+                "🌍 <b>شاخص‌های جهانی، نفت و سهام (دلار):</b>\n" +
+                "\n".join(s_formatted)
             )
 
-        if s_raw or c_raw:
-            # ذخیره خلاصه غنی برای هوش مصنوعی (شامل شاخص‌ها و ۱۰ رمزارز اول)
-            MARKET_CACHE["summary"] = "\n".join(s_raw + c_raw[:10])
+        if stocks_parts:
+            MARKET_CACHE["stocks_text"] = (
+                "📈 <b>تابلوی جامع نرخ طلا، سکه، ارز و بازارهای مالی:</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n" +
+                "\n\n".join(stocks_parts) + "\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                f"⚡ <b>منابع رسمی:</b> صرافی‌ها و بازار طلای تهران & Yahoo Finance\n🕒 <b>زمان استعلام:</b> <code>{time_str}</code> (به وقت تهران)"
+            )
+
+        if s_raw or c_raw or iran_raw:
+            # ذخیره خلاصه غنی برای کانتکست زنده هوش مصنوعی
+            MARKET_CACHE["summary"] = "\n".join(iran_raw + s_raw + c_raw[:10])
             MARKET_CACHE["last_fetched"] = time.time()
     except Exception as e:
         print(f"[Market Update Error]: {e}")
@@ -997,7 +1107,7 @@ def setup_telegram_bot_commands():
         commands = [
             {"command": "status", "description": "📊 مانیتورینگ زنده سلامت و آپ‌تایم سرور"},
             {"command": "crypto", "description": "🪙 تابلوی نرخ ۲۰ رمزارز برتر بازار"},
-            {"command": "stocks", "description": "📈 قیمت جهانی طلا، نفت و شاخص‌های بورس"},
+            {"command": "stocks", "description": "📈 نرخ لحظه‌ای طلا، سکه، دلار، یورو و بورس"},
             {"command": "weather", "description": "🌤️ ایستگاه هواشناسی زنده ایران و جهان"},
             {"command": "image", "description": "🎨 تولید تصویر با هوش مصنوعی (/image)"},
             {"command": "voice", "description": "🎙️ تنظیمات پاسخ صوتی و وویس (/voice)"},
@@ -1186,11 +1296,11 @@ def telegram_bot_worker():
                         status_msg = format_status_message()
                         telegram_send_message(chat_id, status_msg, reply_markup=get_status_inline_keyboard())
 
-                    elif clean_cmd in ("/crypto", "/price", "🪙 نرخ رمزارزها", "🪙 تابلوی نرخ رمزارزها", "🪙 قیمت رمزارزها", "🪙 ۲۰ رمزارز برتر", "۲۰ رمزارز", "قیمت", "ارز", "ارز دیجیتال", "رمز ارز", "رمزارزها", "رمزارز", "کریپتو", "crypto"):
+                    elif clean_cmd in ("/crypto", "/price", "🪙 نرخ رمزارزها", "🪙 تابلوی نرخ رمزارزها", "🪙 قیمت رمزارزها", "🪙 ۲۰ رمزارز برتر", "۲۰ رمزارز", "کریپتو", "ارز دیجیتال", "رمز ارز", "رمزارزها", "رمزارز", "crypto"):
                         prices_msg = get_crypto_prices()
                         telegram_send_message(chat_id, prices_msg, reply_markup=get_crypto_inline_keyboard())
 
-                    elif clean_cmd in ("/stocks", "📈 طلا و بورس", "📈 طلا، نفت و بورس جهانی", "📈 بازار سهام و طلا", "سهام", "طلا", "نفت", "stocks"):
+                    elif clean_cmd in ("/stocks", "📈 طلا و بورس", "📈 طلا، نفت و بورس جهانی", "📈 بازار سهام و طلا", "سهام", "طلا", "سکه", "دلار", "یورو", "ارز", "نفت", "بورس", "stocks") or any(clean_cmd.startswith(pfx) for pfx in ("قیمت طلا", "قیمت سکه", "قیمت دلار", "قیمت یورو", "نرخ طلا", "نرخ دلار", "نرخ سکه", "نرخ یورو")):
                         stocks_msg = get_stocks_prices()
                         telegram_send_message(chat_id, stocks_msg, reply_markup=get_stocks_inline_keyboard())
 
