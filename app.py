@@ -21,11 +21,28 @@ import base64
 import tempfile
 import asyncio
 import re
+import requests
 import concurrent.futures
 import urllib.request
 import urllib.parse
-import requests
+from datetime import datetime, timezone, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
+
+# تنظیم منطقه زمانی رسمی ایران و تهران (UTC+3:30)
+TEHRAN_TZ = timezone(timedelta(hours=3, minutes=30))
+os.environ["TZ"] = "Asia/Tehran"
+try:
+    time.tzset()
+except AttributeError:
+    pass
+
+def get_tehran_now():
+    """دریافت زمان دقیق به وقت رسمی ایران و تهران (UTC+3:30)"""
+    return datetime.now(TEHRAN_TZ)
+
+def get_tehran_time_str(fmt="%H:%M:%S"):
+    """قالب‌بندی دقیق زمان به افق رسمی تهران"""
+    return get_tehran_now().strftime(fmt)
 
 try:
     import edge_tts
@@ -282,7 +299,7 @@ def get_weather_report(city_input="تهران"):
                     f"💨 <b>سرعت باد:</b> {wind} متر بر ثانیه\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
                     f"🛰️ منبع رسمی: OpenWeatherMap Global\n"
-                    f"🕒 زمان استعلام: {time.strftime('%H:%M:%S')}"
+                    f"🕒 زمان استعلام: <code>{get_tehran_time_str()}</code> (به وقت تهران)"
                 )
         except Exception:
             pass
@@ -314,7 +331,7 @@ def get_weather_report(city_input="تهران"):
                 f"💨 <b>سرعت وزش باد:</b> {wind} کیلومتر بر ساعت\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"🛰️ منبع: ایستگاه بین‌المللی هواشناسی (Live Station)\n"
-                f"🕒 زمان استعلام: {time.strftime('%H:%M:%S')}"
+                f"🕒 زمان استعلام: <code>{get_tehran_time_str()}</code> (به وقت تهران)"
             )
     except Exception as e:
         return f"❌ متاسفانه در استعلام آب و هوای «{city_clean}» خطایی رخ داد: {e}"
@@ -401,14 +418,14 @@ def update_market_cache_force():
         c_formatted.append("🔹 <b>تتر (USDT):</b> <code>$1.0000</code> (0.00%)")
         c_raw.append("تتر (USDT): $1.0000")
 
-        time_str = time.strftime('%H:%M:%S')
+        time_str = get_tehran_time_str()
         if c_formatted:
             MARKET_CACHE["crypto_text"] = (
                 "🪙 <b>تابلوی معاملاتی نرخ لحظه‌ای رمزارزها (دلار):</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n" +
                 "\n".join(c_formatted) + "\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
-                f"⚡ <b>منبع رسمی:</b> Yahoo Finance & CoinPaprika\n🕒 <b>زمان استعلام:</b> <code>{time_str}</code>"
+                f"⚡ <b>منبع رسمی:</b> Yahoo Finance & CoinPaprika\n🕒 <b>زمان استعلام:</b> <code>{time_str}</code> (به وقت تهران)"
             )
         if s_formatted:
             MARKET_CACHE["stocks_text"] = (
@@ -416,7 +433,7 @@ def update_market_cache_force():
                 "━━━━━━━━━━━━━━━━━━━━\n" +
                 "\n".join(s_formatted) + "\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
-                f"🏛️ <b>منبع رسمی:</b> Yahoo Finance Global Markets\n🕒 <b>زمان استعلام:</b> <code>{time_str}</code>"
+                f"🏛️ <b>منبع رسمی:</b> Yahoo Finance Global Markets\n🕒 <b>زمان استعلام:</b> <code>{time_str}</code> (به وقت تهران)"
             )
 
         if s_raw or c_raw:
@@ -840,7 +857,7 @@ def reminders_worker():
                     f"⏰ <b>هشدار یادآور هوشمند:</b>\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
                     f"🔔 <b>موضوع:</b> {r['text']}\n"
-                    f"🕒 زمان سررسید: {time.strftime('%H:%M:%S', time.localtime())}"
+                    f"🕒 زمان سررسید: {get_tehran_time_str()} (تهران)"
                 )
                 telegram_send_message(r["chat_id"], alarm_msg)
                 to_remove.append(r)
@@ -856,7 +873,8 @@ def format_status_message():
     uptime_30d = UPTIMEROBOT_DATA.get("uptime_30d", "100.000")
     latency = UPTIMEROBOT_DATA.get("avg_response_time", "256")
     total_pings = UPTIMEROBOT_DATA.get("total_checks_count", 20)
-    last_check = time.strftime('%H:%M:%S', time.localtime(UPTIMEROBOT_DATA.get("last_check_datetime", time.time())))
+    ts = UPTIMEROBOT_DATA.get("last_check_datetime", time.time())
+    last_check = datetime.fromtimestamp(ts, tz=TEHRAN_TZ).strftime('%H:%M:%S')
 
     return (
         "📊 <b>مرکز پایش زنده و سلامت سرور ابری:</b>\n"
@@ -867,7 +885,7 @@ def format_status_message():
         f"🛡️ <b>آپ‌تایم ۳۰ روزه:</b> <code>{uptime_30d}%</code>\n"
         f"🏓 <b>میانگین زمان تاخیر (Latency):</b> <code>{latency} ms</code>\n"
         f"📡 <b>پایش‌های موفق ثبت‌شده:</b> <code>{total_pings} چک</code>\n"
-        f"🕒 <b>آخرین زمان استعلام:</b> <code>{last_check}</code>\n"
+        f"🕒 <b>آخرین زمان استعلام:</b> <code>{last_check}</code> (به وقت تهران)\n"
         "🌍 <b>دیتاسنتر:</b> فرانکفورت، آلمان (EU Central)\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "💡 <i>پایش ۲۴ ساعته و بدون وقفه توسط UptimeRobot Global</i>"
@@ -1848,7 +1866,7 @@ class CloudServerHandler(BaseHTTPRequestHandler):
                         f"📞 <b>اطلاعات تماس:</b> <code>{contact}</code>\n"
                         f"📝 <b>متن پیام:</b>\n{user_msg}\n"
                         f"━━━━━━━━━━━━━━━━━━━━\n"
-                        f"⏰ زمان ثبت: {time.strftime('%Y-%m-%d %H:%M:%S')}"
+                        f"⏰ زمان ثبت: {get_tehran_time_str('%Y/%m/%d %H:%M:%S')} (تهران)"
                     )
                     telegram_send_message(target_chat_id, tele_text)
                     self.send_response(200)
