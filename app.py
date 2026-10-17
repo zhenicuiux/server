@@ -36,18 +36,16 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", _EMBEDDED_TELEGRAM_TOK
 ADMIN_CHAT_ID = None
 REMINDERS = []
 
-# کیبورد لمسی و ثابت پایین صفحه چت تلگرام (ReplyKeyboardMarkup)
+# کیبورد لمسی و ثابت پایین صفحه چت تلگرام (ReplyKeyboardMarkup) - بهینه‌شده، سبک و بدون دکمه‌های زائد
 MAIN_KEYBOARD = {
     "keyboard": [
-        [{"text": "📊 مانیتورینگ زنده سرور"}, {"text": "🤖 گفتگوی هوشمند (AI)"}],
-        [{"text": "🪙 تابلوی نرخ رمزارزها"}, {"text": "📈 طلا، نفت و بورس جهانی"}],
-        [{"text": "🌤️ ایستگاه هواشناسی"}, {"text": "🎨 آتلیه تصویرسازی هوش مصنوعی"}],
-        [{"text": "⏰ یادآور هوشمند زمانی"}, {"text": "⚡ تست پینگ و پایداری"}],
-        [{"text": "🌐 داشبورد ابری وب"}, {"text": "📬 ارسال پیام به مدیریت"}]
+        [{"text": "📊 مانیتورینگ سرور"}, {"text": "🌤️ آب و هوا"}],
+        [{"text": "🪙 نرخ رمزارزها"}, {"text": "📈 طلا و بورس"}],
+        [{"text": "🎨 تولید تصویر با هوش مصنوعی"}]
     ],
     "resize_keyboard": True,
     "is_persistent": True,
-    "input_field_placeholder": "🎙️ وویس بفرستید، سوال بپرسید یا دکمه‌ای انتخاب کنید..."
+    "input_field_placeholder": "🎙️ وویس بفرستید، سوال بپرسید یا گزینه‌ای انتخاب کنید..."
 }
 
 def get_weather_inline_keyboard():
@@ -69,8 +67,7 @@ def get_weather_inline_keyboard():
                 {"text": "استانبول 🌊", "callback_data": "weather_استانبول"}
             ],
             [
-                {"text": "🔄 استعلام مجدد هوا", "callback_data": "weather_تهران"},
-                {"text": "📊 وضعیت سرور", "callback_data": "refresh_status"}
+                {"text": "🔄 به‌روزرسانی آب و هوا", "callback_data": "weather_تهران"}
             ]
         ]
     }
@@ -81,11 +78,6 @@ def get_status_inline_keyboard():
             [
                 {"text": "🔄 به‌روزرسانی زنده وضعیت", "callback_data": "refresh_status"},
                 {"text": "🌐 مشاهده داشبورد وب", "url": "https://arashmesri.onrender.com/"}
-            ],
-            [
-                {"text": "🪙 تابلوی رمزارزها", "callback_data": "refresh_crypto"},
-                {"text": "📈 طلا و سهام", "callback_data": "refresh_stocks"},
-                {"text": "🌤️ آب و هوا", "callback_data": "weather_تهران"}
             ]
         ]
     }
@@ -94,15 +86,7 @@ def get_crypto_inline_keyboard():
     return {
         "inline_keyboard": [
             [
-                {"text": "🔄 به‌روزرسانی زنده رمزارزها", "callback_data": "refresh_crypto"}
-            ],
-            [
-                {"text": "📈 طلا و سهام جهانی", "callback_data": "refresh_stocks"},
-                {"text": "📊 وضعیت سرور", "callback_data": "refresh_status"}
-            ],
-            [
-                {"text": "🌤️ وضعیت آب و هوا", "callback_data": "weather_تهران"},
-                {"text": "🎨 راهنمای نقاشی هوش مصنوعی", "callback_data": "cmd_image_guide"}
+                {"text": "🔄 به‌روزرسانی لحظه‌ای رمزارزها", "callback_data": "refresh_crypto"}
             ]
         ]
     }
@@ -111,15 +95,7 @@ def get_stocks_inline_keyboard():
     return {
         "inline_keyboard": [
             [
-                {"text": "🔄 به‌روزرسانی زنده سهام و طلا", "callback_data": "refresh_stocks"}
-            ],
-            [
-                {"text": "🪙 تابلوی نرخ رمزارزها", "callback_data": "refresh_crypto"},
-                {"text": "📊 وضعیت سرور", "callback_data": "refresh_status"}
-            ],
-            [
-                {"text": "🌤️ وضعیت آب و هوا", "callback_data": "weather_تهران"},
-                {"text": "🌐 داشبورد زنده", "url": "https://arashmesri.onrender.com/"}
+                {"text": "🔄 به‌روزرسانی لحظه‌ای طلا و بورس", "callback_data": "refresh_stocks"}
             ]
         ]
     }
@@ -666,25 +642,22 @@ def telegram_send_chat_action(chat_id, action="typing"):
     telegram_api_call("sendChatAction", {"chat_id": chat_id, "action": action})
 
 def setup_telegram_bot_commands():
-    """ثبت منوی رسمی دستورات تلگرام در دکمه Menu پایین چت"""
+    """ثبت منوی رسمی دستورات تلگرام در دکمه Menu پایین چت - بهینه‌شده و بدون دستورات تکراری"""
     try:
         commands = [
             {"command": "status", "description": "📊 مانیتورینگ زنده سلامت و آپ‌تایم سرور"},
-            {"command": "ai", "description": "🤖 گفتگوی هوشمند با Google Gemini Flash"},
-            {"command": "weather", "description": "🌤️ ایستگاه هواشناسی زنده ایران و جهان"},
-            {"command": "image", "description": "🎨 تولید تصویر با هوش مصنوعی (/image)"},
             {"command": "crypto", "description": "🪙 تابلوی نرخ لحظه‌ای رمزارزها"},
             {"command": "stocks", "description": "📈 قیمت جهانی طلا، نفت و شاخص‌های بورس"},
-            {"command": "setgemini", "description": "🔑 تنظیم کلید اختصاصی Google Gemini"},
-            {"command": "remind", "description": "⏰ تنظیم یادآور هوشمند زمانی"},
-            {"command": "site", "description": "🌐 مشاهده داشبورد و وب‌سایت رسمی"},
-            {"command": "ping", "description": "⚡ تست پینگ و سرعت دیتاسنتر"}
+            {"command": "weather", "description": "🌤️ ایستگاه هواشناسی زنده ایران و جهان"},
+            {"command": "image", "description": "🎨 تولید تصویر با هوش مصنوعی (/image)"},
+            {"command": "remind", "description": "⏰ تنظیم یادآور هوشمند زمانی (/remind)"},
+            {"command": "setgemini", "description": "🔑 تنظیم کلید اختصاصی Google Gemini"}
         ]
         telegram_api_call("setMyCommands", {"commands": commands})
 
         # تنظیم دکمه منو به حالت استاندارد منوی دستورات تلگرام
         telegram_api_call("setChatMenuButton", {"menu_button": {"type": "commands"}})
-        print("[Telegram Setup] منوی رسمی دستورات تلگرام با موفقیت فعال شد.")
+        print("[Telegram Setup] منوی رسمی و پالایش‌شده دستورات تلگرام فعال شد.")
     except Exception as e:
         print(f"[Telegram Setup Error] {e}")
 
@@ -857,19 +830,19 @@ def telegram_bot_worker():
                         )
                         telegram_send_message(chat_id, welcome_msg, reply_markup=get_status_inline_keyboard())
 
-                    elif clean_cmd in ("/status", "📊 مانیتورینگ زنده سرور", "📊 وضعیت زنده سرور", "وضعیت", "سرور", "status"):
+                    elif clean_cmd in ("/status", "📊 مانیتورینگ سرور", "📊 مانیتورینگ زنده سرور", "📊 وضعیت زنده سرور", "وضعیت", "سرور", "status"):
                         status_msg = format_status_message()
                         telegram_send_message(chat_id, status_msg, reply_markup=get_status_inline_keyboard())
 
-                    elif clean_cmd in ("/crypto", "/price", "🪙 تابلوی نرخ رمزارزها", "🪙 قیمت رمزارزها", "قیمت", "ارز", "کریپتو", "crypto"):
+                    elif clean_cmd in ("/crypto", "/price", "🪙 نرخ رمزارزها", "🪙 تابلوی نرخ رمزارزها", "🪙 قیمت رمزارزها", "قیمت", "ارز", "کریپتو", "crypto"):
                         prices_msg = get_crypto_prices()
                         telegram_send_message(chat_id, prices_msg, reply_markup=get_crypto_inline_keyboard())
 
-                    elif clean_cmd in ("/stocks", "📈 طلا، نفت و بورس جهانی", "📈 بازار سهام و طلا", "سهام", "طلا", "نفت", "stocks"):
+                    elif clean_cmd in ("/stocks", "📈 طلا و بورس", "📈 طلا، نفت و بورس جهانی", "📈 بازار سهام و طلا", "سهام", "طلا", "نفت", "stocks"):
                         stocks_msg = get_stocks_prices()
                         telegram_send_message(chat_id, stocks_msg, reply_markup=get_stocks_inline_keyboard())
 
-                    elif clean_cmd in ("/weather", "/hawa", "🌤️ ایستگاه هواشناسی", "🌤️ وضعیت آب و هوا", "هوا", "آب و هوا", "هواشناسی"):
+                    elif clean_cmd in ("/weather", "/hawa", "🌤️ آب و هوا", "🌤️ ایستگاه هواشناسی", "🌤️ وضعیت آب و هوا", "هوا", "آب و هوا", "هواشناسی"):
                         w_report = get_weather_report("تهران")
                         telegram_send_message(chat_id, w_report, reply_markup=get_weather_inline_keyboard())
 
