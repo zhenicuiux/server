@@ -117,7 +117,7 @@ def get_crypto_inline_keyboard():
     return {
         "inline_keyboard": [
             [
-                {"text": "🔄 به‌روزرسانی لحظه‌ای رمزارزها", "callback_data": "refresh_crypto"}
+                {"text": "🔄 به‌روزرسانی ۲۰ رمزارز برتر", "callback_data": "refresh_crypto"}
             ]
         ]
     }
@@ -339,22 +339,193 @@ def get_weather_report(city_input="تهران"):
 # ----------------- حافظه موقت (Cache) بازار مالی و به‌روزرسانی موازی -----------------
 MARKET_CACHE = {
     "last_fetched": 0,
-    "summary": "بیت‌کوین: $68,500 | اتریوم: $2,650 | طلا: $2,720 | نفت: $74.50",
+    "summary": "بیت‌کوین: $81,400 | اتریوم: $2,410 | طلا: $2,720 | نفت: $74.50",
     "crypto_text": "",
     "stocks_text": ""
 }
 
+CRYPTO_NAMES_FA = {
+    "BTC": "بیت‌کوین (BTC)",
+    "ETH": "اتریوم (ETH)",
+    "USDT": "تتر (USDT)",
+    "BNB": "بایننس کوین (BNB)",
+    "SOL": "سولانا (SOL)",
+    "XRP": "ریپل (XRP)",
+    "USDC": "یو‌اس‌دی کوین (USDC)",
+    "DOGE": "دوج‌کوین (DOGE)",
+    "ADA": "کاردانو (ADA)",
+    "TRX": "ترون (TRX)",
+    "AVAX": "آوالانچ (AVAX)",
+    "LINK": "چین‌لینک (LINK)",
+    "SHIB": "شیبا اینو (SHIB)",
+    "SUI": "سویی (SUI)",
+    "DOT": "پولکادات (DOT)",
+    "BCH": "بیت‌کوین کش (BCH)",
+    "NEAR": "نیر پروتکل (NEAR)",
+    "LEO": "لئو (LEO)",
+    "APT": "آپتوس (APT)",
+    "LTC": "لایت‌کوین (LTC)",
+    "TON": "تون‌کوین (TON)",
+    "PEPE": "پپه (PEPE)",
+    "XMR": "مونرو (XMR)",
+    "XLM": "استلار (XLM)",
+    "ETC": "اتریوم کلاسیک (ETC)",
+    "HBAR": "هدرا (HBAR)",
+    "KAS": "کاسپا (KAS)",
+    "UNI": "یونی‌سواپ (UNI)",
+    "ICP": "اینترنت کامپیوتر (ICP)",
+    "POL": "پولیگان (POL)",
+    "MATIC": "پولیگان (MATIC)",
+    "FET": "فت هوش مصنوعی (FET)",
+    "RENDER": "رندر (RENDER)",
+    "ARB": "آربیتروم (ARB)",
+    "OP": "آپتیمیزم (OP)",
+    "FIL": "فایل‌کوین (FIL)",
+    "WIF": "داگ‌ویف‌هت (WIF)",
+    "BONK": "بونک (BONK)",
+    "FLOKI": "فلوکی (FLOKI)",
+    "AAVE": "آوه (AAVE)",
+    "TAO": "بیت‌تنسور (TAO)",
+    "INJ": "اینجکتیو (INJ)",
+    "STX": "استکس (STX)",
+    "TIA": "سلستیا (TIA)",
+    "ALGO": "الگورند (ALGO)",
+    "VET": "وی‌چین (VET)",
+    "ZEC": "زی‌کش (ZEC)",
+    "HYPE": "هایپرلیکوئید (HYPE)",
+    "USDS": "یو‌اس‌دی‌اس (USDS)",
+    "WBT": "وایت‌بیت (WBT)",
+    "WBTC": "رپد بیت‌کوین (WBTC)",
+    "STETH": "استیکد اتر (stETH)",
+    "WSTETH": "رپد استیکد اتر (wstETH)",
+    "FIGR_HELOC": "فیگور هلوک (FIGR)",
+}
+
+def format_crypto_price_str(price):
+    if price is None:
+        return "$0.00"
+    try:
+        p = float(price)
+        if p >= 100:
+            return f"${p:,.2f}"
+        elif p >= 1:
+            return f"${p:,.3f}"
+        elif p >= 0.01:
+            return f"${p:,.4f}"
+        elif p >= 0.0001:
+            return f"${p:,.6f}"
+        else:
+            return f"${p:,.8f}"
+    except:
+        return f"${price}"
+
+def format_crypto_change_icon(change):
+    if change is None:
+        return "⚪", "0.00%"
+    try:
+        ch = float(change)
+        if abs(ch) < 0.005:
+            return "⚪", "0.00%"
+        elif ch > 0:
+            return "🟢", f"+{ch:.2f}%"
+        else:
+            return "🔴", f"{ch:.2f}%"
+    except:
+        return "⚪", "0.00%"
+
+def fetch_top_20_crypto_data():
+    """استعلام ۲۰ رمزارز برتر بازار با ۳ لایه پایداری (CoinGecko -> CoinPaprika -> Yahoo Finance)"""
+    items = []
+
+    # لایه ۱: استعلام زنده و رسمی از CoinGecko
+    try:
+        url = "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=20&page=1&sparkline=false"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if isinstance(data, list) and len(data) >= 10:
+                for rank, coin in enumerate(data[:20], 1):
+                    sym = str(coin.get("symbol", "")).upper()
+                    name = str(coin.get("name", sym))
+                    items.append({
+                        "rank": rank,
+                        "symbol": sym,
+                        "name": name,
+                        "price": coin.get("current_price"),
+                        "change": coin.get("price_change_percentage_24h")
+                    })
+    except Exception as e:
+        print(f"[CoinGecko Fetch Notice]: {e}")
+        items = []
+
+    # لایه ۲: فال‌بک سریع و عمومی به CoinPaprika در صورت ریت‌لیمیت کوین‌گکو
+    if not items:
+        try:
+            url = "https://api.coinpaprika.com/v1/tickers?quotes=USD"
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                if isinstance(data, list):
+                    top_coins = sorted([c for c in data if c.get("rank") and c.get("rank") <= 20], key=lambda x: x["rank"])[:20]
+                    for coin in top_coins:
+                        sym = str(coin.get("symbol", "")).upper()
+                        name = str(coin.get("name", sym))
+                        usd_q = coin.get("quotes", {}).get("USD", {})
+                        items.append({
+                            "rank": coin.get("rank", len(items) + 1),
+                            "symbol": sym,
+                            "name": name,
+                            "price": usd_q.get("price"),
+                            "change": usd_q.get("percent_change_24h")
+                        })
+        except Exception as e:
+            print(f"[CoinPaprika Fetch Notice]: {e}")
+            items = []
+
+    # لایه ۳: فال‌بک نهایی به Yahoo Finance موازی در صورت بروز هرگونه اختلال اینترنتی
+    if not items:
+        top20_yf = [
+            ("BTC-USD", "بیت‌کوین", "BTC"), ("ETH-USD", "اتریوم", "ETH"), ("USDT-USD", "تتر", "USDT"),
+            ("BNB-USD", "بایننس کوین", "BNB"), ("SOL-USD", "سولانا", "SOL"), ("XRP-USD", "ریپل", "XRP"),
+            ("USDC-USD", "یو‌اس‌دی کوین", "USDC"), ("DOGE-USD", "دوج‌کوین", "DOGE"), ("ADA-USD", "کاردانو", "ADA"),
+            ("TRX-USD", "ترون", "TRX"), ("AVAX-USD", "آوالانچ", "AVAX"), ("LINK-USD", "چین‌لینک", "LINK"),
+            ("SHIB-USD", "شیبا اینو", "SHIB"), ("SUI-USD", "سویی", "SUI"), ("DOT-USD", "پولکادات", "DOT"),
+            ("BCH-USD", "بیت‌کوین کش", "BCH"), ("NEAR-USD", "نیر پروتکل", "NEAR"), ("LEO-USD", "لئو", "LEO"),
+            ("APT-USD", "آپتوس", "APT"), ("LTC-USD", "لایت‌کوین", "LTC")
+        ]
+        def _fetch_one_yf(entry):
+            idx, (sym, name, ticker) = entry
+            try:
+                yf_url = f"https://query1.finance.yahoo.com/v8/finance/chart/{urllib.parse.quote(sym)}?interval=1d"
+                r = urllib.request.Request(yf_url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(r, timeout=4) as resp:
+                    d = json.loads(resp.read().decode("utf-8"))
+                    meta = d["chart"]["result"][0]["meta"]
+                    price = float(meta["regularMarketPrice"])
+                    prev = float(meta.get("chartPreviousClose") or meta.get("previousClose") or price)
+                    change = ((price - prev) / prev) * 100 if prev else 0.0
+                    return {
+                        "rank": idx,
+                        "symbol": ticker,
+                        "name": name,
+                        "price": price,
+                        "change": change
+                    }
+            except:
+                return None
+
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+                res = list(ex.map(_fetch_one_yf, enumerate(top20_yf, 1)))
+                items = [r for r in res if r]
+        except Exception as e:
+            print(f"[Yahoo Finance Fallback Error]: {e}")
+
+    return items
+
 def update_market_cache_force():
-    """استعلام موازی و سریع داده‌های بازار مالی با ThreadPoolExecutor در پس‌زمینه"""
+    """استعلام موازی و سریع داده‌های بازار مالی (۲۰ رمزارز برتر + شاخص‌های طلا، نفت و بورس)"""
     global MARKET_CACHE
-    crypto_items = [
-        ("BTC-USD", "بیت‌کوین (BTC)"),
-        ("ETH-USD", "اتریوم (ETH)"),
-        ("SOL-USD", "سولانا (SOL)"),
-        ("BNB-USD", "بایننس کوین (BNB)"),
-        ("XRP-USD", "ریپل (XRP)"),
-        ("DOGE-USD", "دوج‌کوین (DOGE)")
-    ]
 
     stock_items = [
         ("GC=F", "انس طلای جهانی (Gold)"),
@@ -389,43 +560,37 @@ def update_market_cache_force():
             return (None, None)
 
     try:
+        # استعلام همزمان ارزهای دیجیتال و شاخص‌های بورس جهانی
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
-            c_res = list(executor.map(fetch_yf, crypto_items))
-            s_res = list(executor.map(fetch_yf, stock_items))
+            crypto_future = executor.submit(fetch_top_20_crypto_data)
+            stock_futures = [executor.submit(fetch_yf, item) for item in stock_items]
 
-        c_formatted = [f for f, r in c_res if f]
-        c_raw = [r for f, r in c_res if r]
-        s_formatted = [f for f, r in s_res if f]
-        s_raw = [r for f, r in s_res if r]
+            crypto_list = crypto_future.result()
+            stock_res = [f.result() for f in stock_futures]
 
-        if not c_formatted:
-            try:
-                cp_url = "https://api.coinpaprika.com/v1/tickers?quotes=USD"
-                req = urllib.request.Request(cp_url, headers={"User-Agent": "Mozilla/5.0"})
-                with urllib.request.urlopen(req, timeout=4) as cp_resp:
-                    cp_data = json.loads(cp_resp.read().decode("utf-8"))
-                    for target_id, target_name in [("btc-bitcoin", "بیت‌کوین (BTC)"), ("eth-ethereum", "اتریوم (ETH)"), ("sol-solana", "سولانا (SOL)")]:
-                        coin = next((c for c in cp_data if c["id"] == target_id), None)
-                        if coin:
-                            p = coin["quotes"]["USD"]["price"]
-                            ch = coin["quotes"]["USD"]["percent_change_24h"]
-                            icon = "🟢" if ch >= 0 else "🔴"
-                            c_formatted.append(f"{icon} <b>{target_name}:</b> <code>${p:,.2f}</code> ({ch:+.2f}%)")
-                            c_raw.append(f"{target_name}: ${p:,.2f} ({ch:+.2f}%)")
-            except:
-                pass
+        c_formatted = []
+        c_raw = []
+        for coin in crypto_list:
+            rank = coin.get("rank", len(c_formatted) + 1)
+            sym = coin.get("symbol", "").upper()
+            raw_name = coin.get("name", sym)
+            display_name = CRYPTO_NAMES_FA.get(sym, f"{raw_name} ({sym})")
+            price_str = format_crypto_price_str(coin.get("price"))
+            icon, change_str = format_crypto_change_icon(coin.get("change"))
+            c_formatted.append(f"{rank:02d}. {icon} <b>{display_name}:</b> <code>{price_str}</code> ({change_str})")
+            c_raw.append(f"{rank}. {display_name}: {price_str} ({change_str})")
 
-        c_formatted.append("🔹 <b>تتر (USDT):</b> <code>$1.0000</code> (0.00%)")
-        c_raw.append("تتر (USDT): $1.0000")
+        s_formatted = [f for f, r in stock_res if f]
+        s_raw = [r for f, r in stock_res if r]
 
         time_str = get_tehran_time_str()
         if c_formatted:
             MARKET_CACHE["crypto_text"] = (
-                "🪙 <b>تابلوی معاملاتی نرخ لحظه‌ای رمزارزها (دلار):</b>\n"
+                "🪙 <b>۲۰ رمزارز برتر بازار (بر اساس ارزش بازار):</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n" +
                 "\n".join(c_formatted) + "\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
-                f"⚡ <b>منبع رسمی:</b> Yahoo Finance & CoinPaprika\n🕒 <b>زمان استعلام:</b> <code>{time_str}</code> (به وقت تهران)"
+                f"⚡ <b>منابع رسمی:</b> رتبه‌بندی زنده CoinGecko & CoinPaprika\n🕒 <b>زمان استعلام:</b> <code>{time_str}</code> (به وقت تهران)"
             )
         if s_formatted:
             MARKET_CACHE["stocks_text"] = (
@@ -437,7 +602,8 @@ def update_market_cache_force():
             )
 
         if s_raw or c_raw:
-            MARKET_CACHE["summary"] = "\n".join(s_raw + c_raw)
+            # ذخیره خلاصه غنی برای هوش مصنوعی (شامل شاخص‌ها و ۱۰ رمزارز اول)
+            MARKET_CACHE["summary"] = "\n".join(s_raw + c_raw[:10])
             MARKET_CACHE["last_fetched"] = time.time()
     except Exception as e:
         print(f"[Market Update Error]: {e}")
@@ -830,7 +996,7 @@ def setup_telegram_bot_commands():
     try:
         commands = [
             {"command": "status", "description": "📊 مانیتورینگ زنده سلامت و آپ‌تایم سرور"},
-            {"command": "crypto", "description": "🪙 تابلوی نرخ لحظه‌ای رمزارزها"},
+            {"command": "crypto", "description": "🪙 تابلوی نرخ ۲۰ رمزارز برتر بازار"},
             {"command": "stocks", "description": "📈 قیمت جهانی طلا، نفت و شاخص‌های بورس"},
             {"command": "weather", "description": "🌤️ ایستگاه هواشناسی زنده ایران و جهان"},
             {"command": "image", "description": "🎨 تولید تصویر با هوش مصنوعی (/image)"},
@@ -1020,7 +1186,7 @@ def telegram_bot_worker():
                         status_msg = format_status_message()
                         telegram_send_message(chat_id, status_msg, reply_markup=get_status_inline_keyboard())
 
-                    elif clean_cmd in ("/crypto", "/price", "🪙 نرخ رمزارزها", "🪙 تابلوی نرخ رمزارزها", "🪙 قیمت رمزارزها", "قیمت", "ارز", "کریپتو", "crypto"):
+                    elif clean_cmd in ("/crypto", "/price", "🪙 نرخ رمزارزها", "🪙 تابلوی نرخ رمزارزها", "🪙 قیمت رمزارزها", "🪙 ۲۰ رمزارز برتر", "۲۰ رمزارز", "قیمت", "ارز", "ارز دیجیتال", "رمز ارز", "رمزارزها", "رمزارز", "کریپتو", "crypto"):
                         prices_msg = get_crypto_prices()
                         telegram_send_message(chat_id, prices_msg, reply_markup=get_crypto_inline_keyboard())
 
